@@ -22,12 +22,17 @@ endif()
 
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
+set(PASTA_3RD_PARTY_DIR ${PROJECT_SOURCE_DIR}/3rd-party)
 set(PASTA_EXAMPLE_DIR ${PROJECT_SOURCE_DIR}/examples)
 
 # -----------------------------------------------------------------------------
 # must-have package include
 # -----------------------------------------------------------------------------
 include(CheckLanguage)
+
+# Enable test
+include(CTest)
+set(CMAKE_CTEST_ARGUMENTS "--output-on-failure")
 
 add_subdirectory(pasta)
 add_subdirectory(examples)
