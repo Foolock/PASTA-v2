@@ -108,8 +108,10 @@ class Graph {
     void partition_c_pasta();
 
     // run graph with taskflow
-    void run_graph_before_partition(size_t task_runtime);
-    void run_graph_after_partition(size_t task_runtime);
+    void run_graph_before_partition(size_t matrix_size);
+    void run_graph_after_partition(size_t matrix_size);
+
+    void run_graph_semaphore(size_t matrix_size, size_t num_semaphore);
 
   private:
 

@@ -453,6 +453,52 @@ void Graph::run_graph_after_partition(size_t matrix_size) {
             << " us\n";
 }
 
+void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
+
+  tf::Taskflow taskflow;
+  tf::Executor executor;
+  tf::Semaphore semaphore(num_semaphore); // create a semaphore with initial value of num_semaphore 
+
+  for(auto& node : _nodes) {
+    node._task = taskflow.emplace([this, matrix_size, &node]() {
+      // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
+      size_t N = matrix_size;
+      size_t M = matrix_size;
+      size_t K = matrix_size;
+      std::vector<int> A(N*K, 1);
+      std::vector<int> B(K*M, 2);
+      std::vector<int> C(N*M);
+      for(size_t n=0; n<N; n++) {
+        for(size_t m=0; m<M; m++) {
+          int temp = 0;
+          for(size_t k=0; k<K; k++) {
+            temp += A[n*K + k] * B[k*M + m];
+          }
+          C[n*M + m] = temp;
+        }
+      }
+    });
+  }
+
+  for(auto& node : _nodes) {
+    for(auto fanout : node._fanouts) {
+      node._task.precede(fanout->_to->_task);
+    }
+  }
+
+  for(auto& node : _nodes) {
+    node._task.acquire(semaphore);
+    node._task.release(semaphore);
+  }
+
+  auto start = std::chrono::steady_clock::now();
+  executor.run(taskflow).wait();
+  auto end = std::chrono::steady_clock::now();
+  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+
+  printf("taskflow runtime with #semaphores = %ld: %ld us\n", num_semaphore, taskflow_runtime);
+}
+
 void Graph::dump_graph() {
 
   tf::Taskflow taskflow;
