@@ -46,24 +46,77 @@ Graph::Graph(const std::string& filename) {
 
 Node* Graph::insert_node(const std::string& name) {
 
-  Node* new_node = &(_nodes.emplace_back(name));
-  return new_node;
+  // Node node(name);
+  Node* node_ptr = &(_nodes.emplace_back(name));
+  node_ptr->_node_satellite = --_nodes.end();
+
+  return node_ptr;
 }
 
 Edge* Graph::insert_edge(Node* from, Node* to) {
 
-  // construct edge object within vector
-  Edge* new_edge = &(_edges.emplace_back());
+  // Edge edge;
+  Edge* edge_ptr = &_edges.emplace_back();
 
-  // set from and to node for this edge
-  new_edge->_from = from;
-  new_edge->_to = to;
+  edge_ptr->_from = from;
+  edge_ptr->_to = to;
 
-  // add fanout(fanin) for from(to) node
-  from->_fanouts.push_back(new_edge);
-  to->_fanins.push_back(new_edge);
+  from->_fanouts.push_back(edge_ptr);
+  to->_fanins.push_back(edge_ptr);
 
-  return new_edge;
+  // tells the index of this edge in _fanouts of from nodes and _fanins of to nodes
+  // for remove_edge()
+  edge_ptr->_from_satellite = --from->_fanouts.end();
+  edge_ptr->_to_satellite = --to->_fanins.end();
+
+  // tells the index of this edge in _fanouts of from nodes and _fanins of to nodes
+  // but make the index as a pair with nodes, for remove_node()
+  from->_fanout_satellites.push_back(std::make_pair(to, --to->_fanins.end()));
+  to->_fanin_satellites.push_back(std::make_pair(from, --from->_fanouts.end()));
+
+  edge_ptr->_satellite = --_edges.end();
+
+  return edge_ptr;
+}
+
+void Graph::remove_node(Node* node) {
+
+  // remove its fanin/fanout edges from _edges
+  // remove_edge will erase this edge from node->_fanins/fanouts, so no need to pop_front()
+  while(!node->_fanins.empty()) {
+    Edge* from = node->_fanins.front();
+    remove_edge(from);
+  }
+  while(!node->_fanouts.empty()) {
+    Edge* to = node->_fanouts.front();
+    remove_edge(to);
+  }
+  _nodes.erase(node->_node_satellite);
+}
+
+void Graph::remove_edge(Edge* edge) {
+
+  Node* from = edge->_from;
+  Node* to = edge->_to;
+
+  // remove edge from _fanouts of from node
+  // also remove edge from _fanout_satellites of from node
+  // this edge should be in the same index as the edge in _fanouts
+  // because they are always inserted and removed at the same time
+  auto index = std::distance(from->_fanouts.begin(), edge->_from_satellite);
+  auto it_satellite = from->_fanout_satellites.begin();
+  std::advance(it_satellite, index);
+  from->_fanouts.erase(edge->_from_satellite);
+  from->_fanout_satellites.erase(it_satellite);
+
+  // same method applied to to node
+  index = std::distance(to->_fanins.begin(), edge->_to_satellite);
+  it_satellite = to->_fanin_satellites.begin();
+  std::advance(it_satellite, index);
+  to->_fanins.erase(edge->_to_satellite);
+  to->_fanin_satellites.erase(it_satellite);
+
+  _edges.erase(edge->_satellite);
 }
 
 bool Graph::has_cycle_before_partition() {
@@ -455,8 +508,10 @@ void Graph::run_graph_after_partition(size_t matrix_size) {
 
 void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
 
+  std::cout << "total #threads available: " << std::thread::hardware_concurrency() << "\n";
+
   tf::Taskflow taskflow;
-  tf::Executor executor;
+  tf::Executor executor(std::thread::hardware_concurrency());
   tf::Semaphore semaphore(num_semaphore); // create a semaphore with initial value of num_semaphore 
 
   for(auto& node : _nodes) {
@@ -507,7 +562,7 @@ void Graph::dump_graph() {
   auto start = std::chrono::steady_clock::now();
   for(auto& node : _nodes) {
     node._task = taskflow.emplace([this]() {
-    }).name(std::to_string(node._cluster_id));
+    }).name(node._name);
   }
 
   for(auto& node : _nodes) {

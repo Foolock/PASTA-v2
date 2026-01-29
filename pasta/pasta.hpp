@@ -34,8 +34,22 @@ class Node {
 
   private:
     std::string _name;  
+
+    /*
+     * fanouts should not only include which fanout edges this node has(_fanouts)
+     * but also the index of this edge in the fanin edge list of its fanout nodes(_fanout_satellites).
+     * so when removing the node, we just need to traverse the _fanout_satellites once and erase the
+     * edge of this node from the fanin edge list of fanout nodes.
+     * similar method applied to fanins.
+     */
     std::list<Edge*> _fanins;
     std::list<Edge*> _fanouts;
+    std::list<std::pair<Node*, std::list<Edge*>::iterator>> _fanout_satellites;
+    std::list<std::pair<Node*, std::list<Edge*>::iterator>> _fanin_satellites;
+
+    std::list<Node>::iterator _node_satellite;
+    std::list<CNode>::iterator _cnode_satellite;
+
     bool _visited = false;
     tf::Task _task;
     int _cluster_id = -1; // specify which partition (cluster) it belongs
@@ -52,6 +66,11 @@ class Edge {
     Node* _from;
     Node* _to;
 
+    std::list<Edge*>::iterator _from_satellite; // edge satellite in from node _fanouts
+    std::list<Edge*>::iterator _to_satellite; // edge satellite in to node _fanins
+
+    std::list<Edge>::iterator _satellite;
+
 };
 
 class CNode {
@@ -64,6 +83,7 @@ class CNode {
     std::list<Node*> _nodes;
     std::list<CEdge*> _fanins;
     std::list<CEdge*> _fanouts;
+    std::list<CNode>::iterator _satellite;
 
 };
 
@@ -74,6 +94,7 @@ class CEdge {
   private:
     CNode* _from;
     CNode* _to;
+    std::list<CEdge>::iterator _satellite;
 
 };
 
@@ -87,6 +108,8 @@ class Graph {
      // basic ops
     Node* insert_node(const std::string& name = "");
     Edge* insert_edge(Node* from, Node* to);
+    void remove_node(Node* node);
+    void remove_edge(Edge* edge);
 
     // helper
     inline size_t num_nodes() const {
