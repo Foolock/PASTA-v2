@@ -653,7 +653,7 @@ void Graph::get_topo_order(std::vector<Node*>& topo) {
 
 void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
 
-  std::cout << "total #threads available: " << std::thread::hardware_concurrency() << "\n";
+  // std::cout << "total #threads available: " << std::thread::hardware_concurrency() << "\n";
 
   tf::Taskflow taskflow;
   tf::Executor executor(std::thread::hardware_concurrency());
@@ -694,10 +694,10 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
   auto start = std::chrono::steady_clock::now();
   executor.run(taskflow).wait();
   auto end = std::chrono::steady_clock::now();
-  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
   incre_runtime_with_semaphore += taskflow_runtime;
 
-  printf("For current iteration, taskflow runtime with #semaphores = %ld: %ld us\n", num_semaphore, taskflow_runtime);
+  // printf("For current iteration, taskflow runtime with #semaphores = %ld: %ld ms\n", num_semaphore, taskflow_runtime);
 }
 
 void Graph::dump_graph() {

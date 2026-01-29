@@ -35,12 +35,11 @@ int main(int argc, char* argv[]) {
 
   pasta::Graph graph(circuit_file); 
 
-  int max_num_semaphore = 8;
+  int max_parallelism = 8;
 
+  std::cout << "benchmark: " << circuit_file << "\n";
   std::cout << "num_nodes: " << graph.num_nodes() << "\n";
   std::cout << "num_edges: " << graph.num_edges() << "\n";
-
-  graph.run_graph_semaphore(matrix_size, max_num_semaphore);
 
   size_t N = num_incre_ops;
 
@@ -48,13 +47,19 @@ int main(int argc, char* argv[]) {
 
   size_t count = 0;
 
+  int num_semaphore = max_parallelism; // start at 8
+  int dir = -1;                          // going down first: 8->7->...->1
+
   std::mt19937 gen(42);
 
   while (count < num_incre_itr) {
 
-    std::cout << "---------------------\n";
-    std::cout << "running " << count + 1 << " th incremental iteration.\n";
-    std::cout << "---------------------\n";
+    // std::cout << "---------------------\n";
+    // std::cout << "running " << count + 1 << " th incremental iteration.\n";
+    // std::cout << "---------------------\n";
+
+    // run with current semaphore setting
+    graph.run_graph_semaphore(matrix_size, num_semaphore);
 
     // get N random numbers
     std::vector<int> random_nodes = generate_random_nums(graph.num_nodes(), N, gen);
@@ -80,8 +85,20 @@ int main(int argc, char* argv[]) {
       std::exit(EXIT_FAILURE);
     }
 
+    // update semaphore for next iteration: bounce between [1, max_parallelism]
+    num_semaphore += dir;
+    if (num_semaphore <= 1) {
+      num_semaphore = 1;
+      dir = +1;
+    } else if (num_semaphore >= max_parallelism) {
+      num_semaphore = max_parallelism;
+      dir = -1;
+    }
+
     ++count;
   }
+
+  std::cout << "total runtime with semaphore: " << graph.get_incre_runtime_with_semaphore() << " ms\n"; 
 
   return 0;
 }
