@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <string>
+#include <list>
+#include <random>
 #include "taskflow/taskflow.hpp"
 #include "wsq.hpp"
 
@@ -111,6 +113,12 @@ class Graph {
     void remove_node(Node* node);
     void remove_edge(Edge* edge);
 
+    // remove N nodes randomly
+    void remove_random_nodes(size_t N, std::mt19937& gen);
+
+    // remove N edges randomly
+    void remove_random_edges(size_t N, std::mt19937& gen);
+
     // helper
     inline size_t num_nodes() const {
       return _nodes.size();
@@ -122,6 +130,11 @@ class Graph {
       _partition_size = partition_size;
     }
     void dump_graph();
+    inline size_t get_incre_runtime_with_semaphore() {
+      return incre_runtime_with_semaphore;
+    } 
+    // get topological order of current graph 
+    void get_topo_order(std::vector<Node*>& topo); 
 
     // check cycle
     bool has_cycle_before_partition();
@@ -133,7 +146,6 @@ class Graph {
     // run graph with taskflow
     void run_graph_before_partition(size_t matrix_size);
     void run_graph_after_partition(size_t matrix_size);
-
     void run_graph_semaphore(size_t matrix_size, size_t num_semaphore);
 
   private:
@@ -152,6 +164,9 @@ class Graph {
     void _assign_cluster_id(Node* node_ptr, std::vector<std::atomic<size_t>>& cluster_cnt, std::atomic<int>& max_cluster_id);
 
     void _build_partitioned_graph();
+
+    // incremental update with semaphore runtime
+    size_t incre_runtime_with_semaphore = 0;
 
 };
 

@@ -3,7 +3,7 @@
 int main(int argc, char* argv[]) {
 
   if(argc != 4) {
-    std::cerr << "usage: ./example/exp matrix_size num_semaphore circuit_file\n";
+    std::cerr << "usage: ./example/run matrix_size num_semaphore circuit_file\n";
     std::exit(EXIT_FAILURE);
   }
 

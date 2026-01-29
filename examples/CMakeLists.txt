@@ -3,7 +3,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build/examples)
 set(PASTA_EXAMPLES
   simple
   manual
-  exp
+  run
+  incre
 )
 
 foreach(example IN LISTS PASTA_EXAMPLES)

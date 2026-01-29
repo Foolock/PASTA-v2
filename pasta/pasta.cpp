@@ -143,6 +143,40 @@ bool Graph::has_cycle_before_partition() {
   }
 }
 
+void Graph::remove_random_nodes(size_t N, std::mt19937& gen) {
+
+  N = std::min(N, _nodes.size());
+  if (N == 0) return;
+
+  // collect pointers
+  std::vector<Node*> cand;
+  cand.reserve(_nodes.size());
+  for (auto& n : _nodes) cand.push_back(std::addressof(n));
+
+  std::shuffle(cand.begin(), cand.end(), gen);
+  cand.resize(N);
+
+  for (Node* p : cand) remove_node(p); // your existing internal removal
+
+}
+
+void Graph::remove_random_edges(size_t N, std::mt19937& gen) {
+
+  N = std::min(N, _edges.size());
+  if (N == 0) return;
+
+  std::vector<Edge*> cand;
+  cand.reserve(_edges.size());
+  for (auto& e : _edges) cand.push_back(std::addressof(e));
+
+  std::shuffle(cand.begin(), cand.end(), gen);
+  cand.resize(N);
+
+  for (Edge* p : cand) {
+    remove_edge(p);
+  }
+}
+
 bool Graph::has_cycle_after_partition() {
 
   // reset
@@ -506,6 +540,21 @@ void Graph::run_graph_after_partition(size_t matrix_size) {
             << " us\n";
 }
 
+void Graph::get_topo_order(std::vector<Node*>& topo) { 
+
+  // reset
+  for(auto& node : _nodes) {
+    node._visited = false;
+  }
+
+  for(auto& node : _nodes) {
+    if(node._fanins.size() == 0) {
+      _topo_dfs(topo, &node);
+    }
+  }
+
+} 
+
 void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
 
   std::cout << "total #threads available: " << std::thread::hardware_concurrency() << "\n";
@@ -550,8 +599,9 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
   executor.run(taskflow).wait();
   auto end = std::chrono::steady_clock::now();
   size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  incre_runtime_with_semaphore += taskflow_runtime;
 
-  printf("taskflow runtime with #semaphores = %ld: %ld us\n", num_semaphore, taskflow_runtime);
+  printf("For current iteration, taskflow runtime with #semaphores = %ld: %ld us\n", num_semaphore, taskflow_runtime);
 }
 
 void Graph::dump_graph() {
