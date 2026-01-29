@@ -119,6 +119,12 @@ class Graph {
     // remove N edges randomly
     void remove_random_edges(size_t N, std::mt19937& gen);
 
+    // add N edges randomly
+    size_t add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_multiplier = 20); 
+
+    // add N nodes randomly
+    std::vector<Node*> add_random_nodes(size_t N, std::mt19937& gen, const std::string& name_prefix = "new");
+
     // helper
     inline size_t num_nodes() const {
       return _nodes.size();

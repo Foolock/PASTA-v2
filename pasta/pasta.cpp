@@ -177,6 +177,102 @@ void Graph::remove_random_edges(size_t N, std::mt19937& gen) {
   }
 }
 
+size_t Graph::add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_multiplier) {
+
+  std::vector<Node*> topo;
+  topo.reserve(_nodes.size());
+  get_topo_order(topo);
+
+  if (topo.size() < 2 || N == 0) return 0;
+
+  // get_topo_order() is reverse topo because _topo_dfs pushes after recursion
+  std::reverse(topo.begin(), topo.end());
+
+  const size_t n = topo.size();
+
+  // Max possible edges under this ordering is n*(n-1)/2; clamp N to avoid nonsense.
+  const size_t max_possible = n * (n - 1) / 2;
+  if (N > max_possible) N = max_possible;
+
+  auto has_edge = [](Node* from, Node* to) -> bool {
+    for (auto* e : from->_fanouts) {
+      if (e->_to == to) return true;
+    }
+    return false;
+  };
+
+  size_t added = 0;
+  const size_t max_tries = max_tries_multiplier * N + 100;
+
+  std::uniform_int_distribution<size_t> dis_i(0, n - 2);
+
+  for (size_t tries = 0; tries < max_tries && added < N; ++tries) {
+    const size_t i = dis_i(gen);
+    std::uniform_int_distribution<size_t> dis_j(i + 1, n - 1);
+    const size_t j = dis_j(gen);
+
+    Node* from = topo[i];
+    Node* to   = topo[j];
+
+    // avoid duplicates
+    if (has_edge(from, to)) continue;
+
+    insert_edge(from, to);
+    ++added;
+  }
+
+  return added;  // could be < N if graph is already dense
+}
+
+std::vector<Node*> Graph::add_random_nodes(size_t N, std::mt19937& gen, const std::string& name_prefix) {
+  std::vector<Node*> old_nodes;
+  old_nodes.reserve(_nodes.size());
+  for (auto& n : _nodes) {
+    old_nodes.push_back(std::addressof(n));
+  }
+
+  std::vector<Node*> new_nodes;
+  new_nodes.reserve(N);
+
+  // 1) insert nodes
+  for (size_t i = 0; i < N; ++i) {
+    // Make names unique-ish; you can replace with your own global "iteration count"
+    std::string name = name_prefix + "_" + std::to_string(_nodes.size()) + "_" + std::to_string(i);
+    new_nodes.push_back(insert_node(name));
+  }
+
+  // If there were no old nodes, we can't connect to existing nodes
+  if (old_nodes.empty()) return new_nodes;
+
+  auto has_edge = [](Node* from, Node* to) -> bool {
+    for (auto* e : from->_fanouts) {
+      if (e->_to == to) return true;
+    }
+    return false;
+  };
+
+  // 2) connect each new node with one random existing node
+  std::uniform_int_distribution<size_t> pick_old(0, old_nodes.size() - 1);
+  std::bernoulli_distribution coin(0.5);
+
+  for (Node* nn : new_nodes) {
+    Node* ex = old_nodes[pick_old(gen)];
+
+    // Random direction, but always safe because nn is brand new (no other edges yet)
+    if (coin(gen)) {
+      if (!has_edge(ex, nn)) {
+        insert_edge(ex, nn);      // existing -> new
+      }
+    } else {
+      if (!has_edge(nn, ex)) {
+        insert_edge(nn, ex);      // new -> existing
+      }
+    }
+  }
+
+  return new_nodes;
+}
+
 bool Graph::has_cycle_after_partition() {
 
   // reset

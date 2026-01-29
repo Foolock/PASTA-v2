@@ -44,7 +44,7 @@ int main(int argc, char* argv[]) {
 
   size_t N = num_incre_ops;
 
-  size_t num_incre_itr = 2; // we will have totally 1k incremental iterations
+  size_t num_incre_itr = 1000; // we will have totally 1k incremental iterations
 
   size_t count = 0;
 
@@ -67,6 +67,18 @@ int main(int argc, char* argv[]) {
 
     // remove N edges randomly
     graph.remove_random_edges(N, gen);
+
+    // add N edges randomly
+    graph.add_random_edges(N, gen); 
+
+    // add N nodes randomly by connectint the new nodes 
+    // to the existing nodes as dependents/successors  
+    graph.add_random_nodes(N, gen);
+
+    if(graph.has_cycle_before_partition() == true) {
+      std::cerr << "has cycle!\n";
+      std::exit(EXIT_FAILURE);
+    }
 
     ++count;
   }
