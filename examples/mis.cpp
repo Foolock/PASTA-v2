@@ -64,6 +64,42 @@ std::vector<int> mis_greedy(const std::vector<std::vector<int>>& g) {
   return mis;
 }
 
+// in greedy MIS, if a vertex is picked, all its neighbors are permanently blocked.
+// so early picks matter a lot. randomizing the order reduces the chance that a "bad" 
+// early choice ruins the rest.
+// random greedy MIS:
+// shuffle the vertex order 
+// run the same greedy rule as the simple sequential version 
+std::vector<int> mis_random_greedy(const std::vector<std::vector<int>>& g) {
+  int n = (int)g.size();
+
+  // build a random vertex order
+  std::mt19937 rng(42);
+  std::vector<int> order(n);
+  std::iota(order.begin(), order.end(), 0);
+
+  // run greedy algorithm
+  std::vector<char> eligible(n, true);
+  std::vector<char> in_mis(n, false);
+  for(int u : order) {
+    if(!eligible[u]) continue;
+    eligible[u] = false;
+    in_mis[u] = true;
+    for(int v : g[u]) {
+      eligible[v] = false;
+    }
+  }
+
+  std::vector<int> mis;
+  for(int u = 0; u < n; u++) {
+    if(in_mis[u]) mis.push_back(u);
+  }
+
+  return mis;
+}
+
+
+
 bool is_independent_set(const std::vector<std::vector<int>>& g, const std::vector<int>& S) {
   int n = (int)g.size();
   std::vector<char> in(n, false);
@@ -114,14 +150,23 @@ int main() {
 
   auto g = make_undirected_graph(n, p);
   auto S_greedy = mis_greedy(g);
+  auto S_random_greedy = mis_random_greedy(g);
 
   long long m = count_edges_undirected(g);
 
   std::cout << "graph has " << n << " nodes, and " << m << " edges\n"; 
+  std::cout << "S_greedy has " << S_greedy.size() << " nodes\n"; 
+  std::cout << "S_random_greedy has " << S_random_greedy.size() << " nodes\n"; 
 
-  std::cout << "the result is MIS? " << ((is_independent_set(g, S_greedy) && 
-                                          is_maximal_independent_set(g, S_greedy))? "YES" : "NO")
-                                     << "\n";
+  std::cout << "S_greedy is MIS? " << ((is_independent_set(g, S_greedy) && 
+                                        is_maximal_independent_set(g, S_greedy))? "YES" : "NO")
+                                   << "\n";
+
+  std::cout << "S_random_greedy is MIS? " << ((is_independent_set(g, S_random_greedy) && 
+                                               is_maximal_independent_set(g, S_random_greedy))? "YES" : "NO")
+                                          << "\n";
+
+
 
 }
 
