@@ -5,6 +5,7 @@ set(PASTA_EXAMPLES
   manual
   run
   incre
+  mis
 )
 
 foreach(example IN LISTS PASTA_EXAMPLES)
