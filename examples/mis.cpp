@@ -99,6 +99,90 @@ std::vector<int> mis_random_greedy(const std::vector<std::vector<int>>& g) {
 }
 
 
+// Luby's algorithm (PRAM-style randomized MIS), sequential simulation
+// Returns a maximal independent set.
+// 
+// High-level (per round):
+// 1) Each active vertex picks a random priority.
+// 2) A vertex is selected if it has higher prioity than all active neighbors
+//    (if there is a tie, use vertex id to determine).
+// 3) Add selected vertices to MIS; deactivate them and all their neighbors
+// Repeat until no active vertices remain.
+std::vector<int> mis_luby(const std::vector<std::vector<int>>& g) {
+  int n = (int)g.size();
+  std::mt19937 rng(42);
+
+  std::vector<char> active(n, true);
+  std::vector<char> in_mis(n, false);
+  std::vector<uint32_t> priority(n, 0);
+
+  int active_count = n;
+  while(active_count > 0) {
+    // 1) Random priorities for active vertices
+    for(int u = 0; u < n; u++) {
+      if(active[u]) {
+        priority[u] = rng();
+      }
+    }
+
+    // 2) Local maxima selection
+    //    Choose the one neighbor with the highest priority
+    std::vector<char> selected(n, false);
+    for(int u = 0; u < n; u++) {
+      if(!active[u]) continue;
+      
+      bool win = true;
+      for(int v : g[u]) {
+        if(!active[v]) continue;
+
+        // If neighbor has strictly higher priority, u loses
+        // If equal priority, break ties by id (higher id wins here)
+        if(priority[v] > priority[u] || (priority[v] == priority[u] && v > u)) {
+          win = false;
+          break;
+        }
+      }
+      if(win) selected[u] = true; 
+    }
+
+    // 3) Deactivate selected vertices and their neighbors
+    std::vector<int> to_deactivate;
+    to_deactivate.reserve(n);
+
+    for(int u = 0; u < n; u++) {
+      if(!selected[u]) continue;
+
+      in_mis[u] = true;
+
+      if(active[u]) to_deactivate.push_back(u);
+      for(int v : g[u]) {
+        if(active[v]) to_deactivate.push_back(v);
+      }
+    }
+
+    // ???
+    // This is used to remove the duplicated nodes in to_deactivate
+    // since two nodes might have same neighbors
+    std::sort(to_deactivate.begin(), to_deactivate.end());
+    to_deactivate.erase(std::unique(to_deactivate.begin(), to_deactivate.end()),
+                        to_deactivate.end());
+
+    for(int u : to_deactivate) {
+      if(active[u]) {
+        active[u] = false;
+        --active_count; 
+      }
+    }
+
+  }
+
+  std::vector<int> mis;
+  for(int u = 0; u < n; u++) {
+    if(in_mis[u]) mis.push_back(u);
+  }
+  return mis;
+}
+
 
 bool is_independent_set(const std::vector<std::vector<int>>& g, const std::vector<int>& S) {
   int n = (int)g.size();
@@ -149,25 +233,26 @@ int main() {
   const double p = 0.1;
 
   auto g = make_undirected_graph(n, p);
-  auto S_greedy = mis_greedy(g);
-  auto S_random_greedy = mis_random_greedy(g);
-
   long long m = count_edges_undirected(g);
-
   std::cout << "graph has " << n << " nodes, and " << m << " edges\n"; 
-  std::cout << "S_greedy has " << S_greedy.size() << " nodes\n"; 
-  std::cout << "S_random_greedy has " << S_random_greedy.size() << " nodes\n"; 
 
+  auto S_greedy = mis_greedy(g);
+  std::cout << "S_greedy has " << S_greedy.size() << " nodes\n"; 
   std::cout << "S_greedy is MIS? " << ((is_independent_set(g, S_greedy) && 
                                         is_maximal_independent_set(g, S_greedy))? "YES" : "NO")
                                    << "\n";
 
+  auto S_random_greedy = mis_random_greedy(g);
+  std::cout << "S_random_greedy has " << S_random_greedy.size() << " nodes\n"; 
   std::cout << "S_random_greedy is MIS? " << ((is_independent_set(g, S_random_greedy) && 
                                                is_maximal_independent_set(g, S_random_greedy))? "YES" : "NO")
                                           << "\n";
 
-
-
+  auto S_luby = mis_luby(g);
+  std::cout << "S_luby has " << S_luby.size() << " nodes\n"; 
+  std::cout << "S_luby is MIS? " << ((is_independent_set(g, S_luby) && 
+                                      is_maximal_independent_set(g, S_luby))? "YES" : "NO")
+                                 << "\n";
 }
 
 
