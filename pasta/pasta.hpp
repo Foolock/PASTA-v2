@@ -37,6 +37,11 @@ class Node {
   private:
     std::string _name;  
 
+    int _id = -1;
+
+    int _level = -1;
+    int _lid = -1; // indicate its index within its level 
+
     /*
      * fanouts should not only include which fanout edges this node has(_fanouts)
      * but also the index of this edge in the fanin edge list of its fanout nodes(_fanout_satellites).
@@ -139,8 +144,7 @@ class Graph {
     inline size_t get_incre_runtime_with_semaphore() {
       return incre_runtime_with_semaphore;
     } 
-    // get topological order of current graph 
-    void get_topo_order(std::vector<Node*>& topo); 
+    void test_func();
 
     // check cycle
     bool has_cycle_before_partition();
@@ -148,6 +152,9 @@ class Graph {
 
     // C-PASTA
     void partition_c_pasta();
+
+    // CUDAFlow partition
+    void partition_cudaflow();
 
     // run graph with taskflow
     void run_graph_before_partition(size_t matrix_size);
@@ -163,6 +170,15 @@ class Graph {
     std::list<Edge> _edges;
     std::list<CNode> _cnodes;
     std::list<CEdge> _cedges;
+
+    // get level list of current graph 
+    std::vector<std::vector<Node*>> _get_level_list();
+
+    // get topological order of current graph using BFS
+    std::vector<Node*> _get_topo_order_bfs();
+
+    // get reversed topological order of current graph using DFS 
+    void _get_topo_reverse_order_dfs(std::vector<Node*>& topo); 
 
     template <typename T>
     void _topo_dfs(std::vector<T*>& topo_order, T* node);

@@ -47,8 +47,10 @@ Graph::Graph(const std::string& filename) {
 Node* Graph::insert_node(const std::string& name) {
 
   // Node node(name);
+  int id = (int)_nodes.size();
   Node* node_ptr = &(_nodes.emplace_back(name));
   node_ptr->_node_satellite = --_nodes.end();
+  node_ptr->_id = id;
 
   return node_ptr;
 }
@@ -181,11 +183,11 @@ size_t Graph::add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_mul
 
   std::vector<Node*> topo;
   topo.reserve(_nodes.size());
-  get_topo_order(topo);
+  _get_topo_reverse_order_dfs(topo);
 
   if (topo.size() < 2 || N == 0) return 0;
 
-  // get_topo_order() is reverse topo because _topo_dfs pushes after recursion
+  // _get_topo_reverse_order_dfs() is reverse topo because _topo_dfs pushes after recursion
   std::reverse(topo.begin(), topo.end());
 
   const size_t n = topo.size();
@@ -295,19 +297,6 @@ bool Graph::has_cycle_after_partition() {
   else {
     return true;
   }
-}
-
-template <typename T>
-void Graph::_topo_dfs(std::vector<T*>& topo_order, T* node) {
-
-  node->_visited = true;
-  for(auto fanout : node->_fanouts) {
-    T* successor = fanout->_to;
-    if(!successor->_visited) {
-      _topo_dfs(topo_order, successor);
-    }
-  }
-  topo_order.push_back(node);
 }
 
 void Graph::partition_c_pasta() {
@@ -636,7 +625,7 @@ void Graph::run_graph_after_partition(size_t matrix_size) {
             << " us\n";
 }
 
-void Graph::get_topo_order(std::vector<Node*>& topo) { 
+void Graph::_get_topo_reverse_order_dfs(std::vector<Node*>& topo) { 
 
   // reset
   for(auto& node : _nodes) {
@@ -650,6 +639,19 @@ void Graph::get_topo_order(std::vector<Node*>& topo) {
   }
 
 } 
+
+template <typename T>
+void Graph::_topo_dfs(std::vector<T*>& topo_order, T* node) {
+
+  node->_visited = true;
+  for(auto fanout : node->_fanouts) {
+    T* successor = fanout->_to;
+    if(!successor->_visited) {
+      _topo_dfs(topo_order, successor);
+    }
+  }
+  topo_order.push_back(node);
+}
 
 void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
 
@@ -720,4 +722,130 @@ void Graph::dump_graph() {
   taskflow.dump(std::cout);
 }
 
+std::vector<Node*> Graph::_get_topo_order_bfs() {
+
+  std::vector<Node*> topo;
+
+  std::vector<int> indegrees(_nodes.size(), 0);
+  for(auto& node : _nodes) {
+    indegrees[node._id] = (int)node._fanins.size();
+  }
+
+  std::queue<Node*> q;
+  for(auto& node : _nodes) {
+    if(node._fanins.size() == 0) {
+      node._level = 0;
+      q.push(&node);
+    }
+  }
+
+  while(!q.empty()) {
+    
+    Node* cur = q.front();
+    q.pop();
+
+    topo.push_back(cur);
+
+    for(auto fanout : cur->_fanouts) {
+      Node* fanout_node = fanout->_to;
+      if(--indegrees[fanout_node->_id] == 0) {
+        fanout_node->_level = ++cur->_level;
+        q.push(fanout_node);
+      }
+    }
+  }
+
+  return topo; 
+}
+
+void Graph::test_func() {
+
+  std::vector<std::vector<Node*>> level_list = _get_level_list();
+
+  int level_id = 0;
+  for(auto level : level_list) {
+    std::cout << "level " << level_id << ": ";
+    for(auto node_ptr : level) {
+      std::cout << node_ptr->_name << "(" << node_ptr->_lid << ") ";
+    }
+    std::cout << "\n";
+  }
+}
+
+std::vector<std::vector<Node*>> Graph::_get_level_list() {
+
+  std::vector<std::vector<Node*>> level_list;
+
+  std::vector<int> indegrees(_nodes.size(), 0);
+  for(auto& node : _nodes) {
+    indegrees[node._id] = node._fanins.size();
+  }
+
+  std::queue<Node*> q;
+  for(auto& node : _nodes) {
+    if(node._fanins.size() == 0) {
+      q.push(&node);
+    }
+  }
+
+  size_t visited = 0;
+
+  while(!q.empty()) {
+    
+    int level_length = static_cast<int>(q.size());
+    level_list.emplace_back();
+    level_list.back().reserve(level_length);
+
+    for(int i = 0; i < level_length; i++) {
+      Node* cur = q.front(); q.pop();
+      cur->_lid = static_cast<int>(level_list.back().size());
+      level_list.back().push_back(cur); 
+      ++visited;
+
+      for(auto fanout : cur->_fanouts) {
+        Node* fanout_node = fanout->_to;
+        if(--indegrees[fanout_node->_id] == 0) {
+          q.push(fanout_node);
+        }
+      }
+    }
+  }
+
+  if(visited != _nodes.size()) {
+    throw std::runtime_error("The DAG has a cycle");
+  }
+
+  return level_list;
+}
+
+void Graph::partition_cudaflow() {
+
+}
+
 } // end of namespace pasta
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
