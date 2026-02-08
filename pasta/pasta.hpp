@@ -41,6 +41,7 @@ class Node {
 
     int _level = -1;
     int _lid = -1; // indicate its index within its level 
+    int _sm = -1;
 
     /*
      * fanouts should not only include which fanout edges this node has(_fanouts)
@@ -62,6 +63,10 @@ class Node {
     int _cluster_id = -1; // specify which partition (cluster) it belongs
     std::atomic<size_t> _dep_cnt{0};
     CNode* _cnode = NULL; // specify which cnode (cluster) it belongs
+
+    // used in cudaflow reconstructed graph
+    std::vector<Node*> _reconstructed_fanins;
+    std::vector<Node*> _reconstructed_fanouts;
 
 };
 
@@ -154,7 +159,15 @@ class Graph {
     void partition_c_pasta();
 
     // CUDAFlow partition
-    void partition_cudaflow();
+    // reconstruct graph based on cudaflow
+    void partition_cudaflow(size_t num_streams = 4);
+
+    // check if two DAGs that shares same set of vertices, 
+    // one partitioned by cudaflow, one original, share at least one topological order
+    // we just need to check if the union graph of G1 and G2 is acyclic
+    // if it is, then they share at least one topological order
+    // union graph is "same set of vertices built on all the edges in G1 and G2"
+    bool is_cudaflow_partition_share_same_topo_order();
 
     // run graph with taskflow
     void run_graph_before_partition(size_t matrix_size);

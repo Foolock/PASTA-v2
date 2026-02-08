@@ -873,10 +873,6 @@ void Graph::partition_cudaflow(size_t num_streams) {
     }
   }
 
-  // if(!is_cudaflow_partition_share_same_topo_order()) {
-  //   throw std::runtime_error("they do not share same topological order.\n");
-  // }
-
   /*
   // dump graph to check
   tf::Taskflow taskflow;
@@ -901,8 +897,9 @@ void Graph::partition_cudaflow(size_t num_streams) {
 bool Graph::is_cudaflow_partition_share_same_topo_order() {
 
   // store the union graph of two DAGs as adjacent list
-  std::vector<std::vector<int>> adj(_nodes.size());
-  std::vector<int> indegrees(_nodes.size(), 0);
+  // two DAGs has the same size as _nodes.size()
+  std::vector<std::vector<int>> adj(2*_nodes.size());
+  std::vector<int> indegrees(2*_nodes.size(), 0);
 
   // add original DAG to adj
   for(auto& node : _nodes) {
@@ -914,39 +911,13 @@ bool Graph::is_cudaflow_partition_share_same_topo_order() {
   }
 
   // add cudaflow partitioned DAG to adj
-  // here we increment the indegrees and add more edges
-  // there could be duplicate edges in union graph
-  // but the topological sort can handle this
+  // increment all ids by _nodes.size()
   for(auto& node : _nodes) {
-    indegrees[node._id] += node._reconstructed_fanins.size();
+    indegrees[node._id + _nodes.size()] = node._reconstructed_fanins.size();
     for(auto fanout_node : node._reconstructed_fanouts) {
-      adj[node._id].push_back(fanout_node->_id);
+      adj[node._id + _nodes.size()].push_back(fanout_node->_id + _nodes.size());
     }
   }
-
-  // run topological sort to check if union graph is acyclic
-  std::queue<int> q;
-  for(int i = 0; i < static_cast<int>(_nodes.size()); i++) {
-    if(indegrees[i] == 0) {
-      q.push(i);
-    }
-  }
-
-  size_t visited = 0;
-  while(!q.empty()) {
-    
-    int cur = q.front();
-    q.pop();
-    visited++;
-
-    for(int successor : adj[cur]) {
-      if(--indegrees[successor] == 0) {
-        q.push(successor);
-      }
-    }
-  }
-
-  return (visited == _nodes.size());
 }
 
 } // end of namespace pasta

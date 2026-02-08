@@ -39,3 +39,4 @@ set(CMAKE_CTEST_ARGUMENTS "--output-on-failure")
 
 add_subdirectory(pasta)
 add_subdirectory(examples)
+add_subdirectory(unittests)
