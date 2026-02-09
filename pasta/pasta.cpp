@@ -571,10 +571,10 @@ void Graph::run_graph_before_partition(size_t matrix_size) {
   auto start = std::chrono::steady_clock::now();
   executor.run(taskflow).wait();
   auto end = std::chrono::steady_clock::now();
-  size_t origin_taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  size_t origin_taskflow_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
 
   std::cout << "origin_taskflow_runtime: " << origin_taskflow_runtime
-            << " us\n";
+            << " ms\n";
 }
 
 void Graph::run_graph_after_partition(size_t matrix_size) {
@@ -657,12 +657,11 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
 
   // std::cout << "total #threads available: " << std::thread::hardware_concurrency() << "\n";
 
-  tf::Taskflow taskflow;
-  tf::Executor executor(std::thread::hardware_concurrency());
-  tf::Semaphore semaphore(num_semaphore); // create a semaphore with initial value of num_semaphore 
+  _taskflow.clear();
+  _semaphore.reset(num_semaphore);
 
   for(auto& node : _nodes) {
-    node._task = taskflow.emplace([this, matrix_size, &node]() {
+    node._task = _taskflow.emplace([this, matrix_size, &node]() {
       // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
       size_t N = matrix_size;
       size_t M = matrix_size;
@@ -689,12 +688,12 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
   }
 
   for(auto& node : _nodes) {
-    node._task.acquire(semaphore);
-    node._task.release(semaphore);
+    node._task.acquire(_semaphore);
+    node._task.release(_semaphore);
   }
 
   auto start = std::chrono::steady_clock::now();
-  executor.run(taskflow).wait();
+  _executor.run(_taskflow).wait();
   auto end = std::chrono::steady_clock::now();
   size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
   _incre_runtime_with_semaphore += taskflow_runtime;
@@ -965,11 +964,10 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
 
   partition_cudaflow(num_streams);
 
-  tf::Taskflow taskflow;
-  tf::Executor executor(std::thread::hardware_concurrency());
+  _taskflow.clear();
 
   for(auto& node : _nodes) {
-    node._task = taskflow.emplace([this, matrix_size, &node]() {
+    node._task = _taskflow.emplace([this, matrix_size, &node]() {
       // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
       size_t N = matrix_size;
       size_t M = matrix_size;
@@ -996,7 +994,7 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
   }
 
   auto start = std::chrono::steady_clock::now();
-  executor.run(taskflow).wait();
+  _executor.run(_taskflow).wait();
   auto end = std::chrono::steady_clock::now();
   size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
   _incre_runtime_with_cudaflow_partition += taskflow_runtime;

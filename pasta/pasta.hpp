@@ -206,9 +206,14 @@ class Graph {
 
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;
+    size_t _incre_runtime_with_semaphore_graph_construct = 0;
 
     // incremental update with cudaflow_partition runtime
     size_t _incre_runtime_with_cudaflow_partition = 0;
+
+    tf::Taskflow _taskflow;
+    tf::Executor _executor{std::thread::hardware_concurrency()};
+    tf::Semaphore _semaphore{std::thread::hardware_concurrency()};  
 
 };
 

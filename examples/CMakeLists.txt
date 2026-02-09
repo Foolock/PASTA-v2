@@ -8,6 +8,7 @@ set(PASTA_EXAMPLES
   incre_cudaflow_partition 
   mis
   cudaflow_partition
+  semaphore
 )
 
 foreach(example IN LISTS PASTA_EXAMPLES)
