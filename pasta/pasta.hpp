@@ -39,10 +39,6 @@ class Node {
 
     int _id = -1;
 
-    int _level = -1;
-    int _lid = -1; // indicate its index within its level 
-    int _sm = -1;
-
     /*
      * fanouts should not only include which fanout edges this node has(_fanouts)
      * but also the index of this edge in the fanin edge list of its fanout nodes(_fanout_satellites).
@@ -65,6 +61,10 @@ class Node {
     CNode* _cnode = NULL; // specify which cnode (cluster) it belongs
 
     // used in cudaflow reconstructed graph
+    int _topo_id = -1; // idx in topological order
+    int _level = -1;
+    int _lid = -1; // indicate its index within its level 
+    int _sm = -1;
     std::vector<Node*> _reconstructed_fanins;
     std::vector<Node*> _reconstructed_fanouts;
 
@@ -146,9 +146,12 @@ class Graph {
       _partition_size = partition_size;
     }
     void dump_graph();
-    inline size_t get_incre_runtime_with_semaphore() {
-      return incre_runtime_with_semaphore;
+    inline size_t get_incre_runtime_with_semaphore() const {
+      return _incre_runtime_with_semaphore;
     } 
+    inline size_t get_incre_runtime_with_cudaflow_partition() const {
+      return _incre_runtime_with_cudaflow_partition;
+    }
     void test_func();
 
     // check cycle
@@ -172,7 +175,8 @@ class Graph {
     // run graph with taskflow
     void run_graph_before_partition(size_t matrix_size);
     void run_graph_after_partition(size_t matrix_size);
-    void run_graph_semaphore(size_t matrix_size, size_t num_semaphore);
+    void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
+    void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
 
   private:
 
@@ -201,7 +205,10 @@ class Graph {
     void _build_partitioned_graph();
 
     // incremental update with semaphore runtime
-    size_t incre_runtime_with_semaphore = 0;
+    size_t _incre_runtime_with_semaphore = 0;
+
+    // incremental update with cudaflow_partition runtime
+    size_t _incre_runtime_with_cudaflow_partition = 0;
 
 };
 

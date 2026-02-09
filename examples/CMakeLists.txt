@@ -4,8 +4,10 @@ set(PASTA_EXAMPLES
   simple
   manual
   run
-  incre
+  incre_semaphore 
+  incre_cudaflow_partition 
   mis
+  cudaflow_partition
 )
 
 foreach(example IN LISTS PASTA_EXAMPLES)

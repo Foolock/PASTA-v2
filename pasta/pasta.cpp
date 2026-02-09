@@ -697,7 +697,7 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
   executor.run(taskflow).wait();
   auto end = std::chrono::steady_clock::now();
   size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
-  incre_runtime_with_semaphore += taskflow_runtime;
+  _incre_runtime_with_semaphore += taskflow_runtime;
 
   // printf("For current iteration, taskflow runtime with #semaphores = %ld: %ld ms\n", num_semaphore, taskflow_runtime);
 }
@@ -802,7 +802,7 @@ std::vector<std::vector<Node*>> Graph::_get_level_list() {
       Node* cur = q.front(); q.pop();
       cur->_lid = static_cast<int>(level_list.back().size());
       level_list.back().push_back(cur); 
-      ++visited;
+      cur->_topo_id = visited++;
 
       for(auto fanout : cur->_fanouts) {
         Node* fanout_node = fanout->_to;
@@ -822,6 +822,18 @@ std::vector<std::vector<Node*>> Graph::_get_level_list() {
 
 void Graph::partition_cudaflow(size_t num_streams) {
 
+  // TODO: instead of reset the reconstructed graph, do it incrementally
+  int id = 0;
+  for(auto& node : _nodes) {
+    node._id = id++;
+    node._topo_id = -1;
+    node._level = -1;
+    node._lid = -1;
+    node._sm = -1;
+    node._reconstructed_fanins.clear();
+    node._reconstructed_fanouts.clear();
+  }
+
   // get level list 
   // assign lid to each node
   std::vector<std::vector<Node*>> level_list = _get_level_list(); 
@@ -838,7 +850,7 @@ void Graph::partition_cudaflow(size_t num_streams) {
         Node* predecessor = fanin->_from; 
         int stream_id_prev = (predecessor->_lid) % num_streams;
         if(stream_id_prev == node->_sm) {
-          if(!last_assign || (last_assign && last_assign->_id < predecessor->_id)) {
+          if(!last_assign || (last_assign && last_assign->_topo_id < predecessor->_topo_id)) {
             last_assign = predecessor;
           }
         }
@@ -947,6 +959,48 @@ bool Graph::is_cudaflow_partition_share_same_topo_order() {
   }
 
   return (visited == _nodes.size());
+}
+
+void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams) { // num_streams = max_parallelism
+
+  partition_cudaflow(num_streams);
+
+  tf::Taskflow taskflow;
+  tf::Executor executor(std::thread::hardware_concurrency());
+
+  for(auto& node : _nodes) {
+    node._task = taskflow.emplace([this, matrix_size, &node]() {
+      // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
+      size_t N = matrix_size;
+      size_t M = matrix_size;
+      size_t K = matrix_size;
+      std::vector<int> A(N*K, 1);
+      std::vector<int> B(K*M, 2);
+      std::vector<int> C(N*M);
+      for(size_t n=0; n<N; n++) {
+        for(size_t m=0; m<M; m++) {
+          int temp = 0;
+          for(size_t k=0; k<K; k++) {
+            temp += A[n*K + k] * B[k*M + m];
+          }
+          C[n*M + m] = temp;
+        }
+      }
+    });
+  }
+
+  for(auto& node : _nodes) {
+    for(auto fanout_node : node._reconstructed_fanouts) {
+      node._task.precede(fanout_node->_task);
+    }
+  }
+
+  auto start = std::chrono::steady_clock::now();
+  executor.run(taskflow).wait();
+  auto end = std::chrono::steady_clock::now();
+  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
+  _incre_runtime_with_cudaflow_partition += taskflow_runtime;
+
 }
 
 } // end of namespace pasta
