@@ -43,7 +43,7 @@ int main(int argc, char* argv[]) {
 
   size_t N = num_incre_ops;
 
-  size_t num_incre_itr = 1000; // we will have totally 1k incremental iterations
+  size_t num_incre_itr = 100; // we will have totally 1k incremental iterations
 
   size_t count = 0;
 
@@ -51,6 +51,8 @@ int main(int argc, char* argv[]) {
   int dir = -1;                          // going down first: 8->7->...->1
 
   std::mt19937 gen(42);
+  
+  bool run_semaphore = true;
 
   while (count < num_incre_itr) {
 
@@ -98,6 +100,7 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
+  std::cout << "total constructtime with semaphore: " << graph.get_incre_runtime_with_semaphore_graph_construct() << " ms\n"; 
   std::cout << "total runtime with semaphore: " << graph.get_incre_runtime_with_semaphore() << " ms\n"; 
 
   return 0;

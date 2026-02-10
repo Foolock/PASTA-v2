@@ -44,7 +44,7 @@ Graph::Graph(const std::string& filename) {
   }
 }
 
-Node* Graph::insert_node(const std::string& name) {
+Node* Graph::insert_node(const std::string& name, bool run_semaphore) {
 
   // Node node(name);
   int id = (int)_nodes.size();
@@ -55,7 +55,7 @@ Node* Graph::insert_node(const std::string& name) {
   return node_ptr;
 }
 
-Edge* Graph::insert_edge(Node* from, Node* to) {
+Edge* Graph::insert_edge(Node* from, Node* to, bool run_semaphore) {
 
   // Edge edge;
   Edge* edge_ptr = &_edges.emplace_back();
@@ -81,7 +81,7 @@ Edge* Graph::insert_edge(Node* from, Node* to) {
   return edge_ptr;
 }
 
-void Graph::remove_node(Node* node) {
+void Graph::remove_node(Node* node, bool run_semaphore) {
 
   // remove its fanin/fanout edges from _edges
   // remove_edge will erase this edge from node->_fanins/fanouts, so no need to pop_front()
@@ -96,7 +96,7 @@ void Graph::remove_node(Node* node) {
   _nodes.erase(node->_node_satellite);
 }
 
-void Graph::remove_edge(Edge* edge) {
+void Graph::remove_edge(Edge* edge, bool run_semaphore) {
 
   Node* from = edge->_from;
   Node* to = edge->_to;
@@ -145,7 +145,7 @@ bool Graph::has_cycle_before_partition() {
   }
 }
 
-void Graph::remove_random_nodes(size_t N, std::mt19937& gen) {
+void Graph::remove_random_nodes(size_t N, std::mt19937& gen, bool run_semaphore) {
 
   N = std::min(N, _nodes.size());
   if (N == 0) return;
@@ -158,11 +158,11 @@ void Graph::remove_random_nodes(size_t N, std::mt19937& gen) {
   std::shuffle(cand.begin(), cand.end(), gen);
   cand.resize(N);
 
-  for (Node* p : cand) remove_node(p); // your existing internal removal
+  for (Node* p : cand) remove_node(p, run_semaphore); // your existing internal removal
 
 }
 
-void Graph::remove_random_edges(size_t N, std::mt19937& gen) {
+void Graph::remove_random_edges(size_t N, std::mt19937& gen, bool run_semaphore) {
 
   N = std::min(N, _edges.size());
   if (N == 0) return;
@@ -175,11 +175,11 @@ void Graph::remove_random_edges(size_t N, std::mt19937& gen) {
   cand.resize(N);
 
   for (Edge* p : cand) {
-    remove_edge(p);
+    remove_edge(p, run_semaphore);
   }
 }
 
-size_t Graph::add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_multiplier) {
+size_t Graph::add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_multiplier, bool run_semaphore) {
 
   std::vector<Node*> topo;
   topo.reserve(_nodes.size());
@@ -219,14 +219,14 @@ size_t Graph::add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_mul
     // avoid duplicates
     if (has_edge(from, to)) continue;
 
-    insert_edge(from, to);
+    insert_edge(from, to, run_semaphore);
     ++added;
   }
 
   return added;  // could be < N if graph is already dense
 }
 
-std::vector<Node*> Graph::add_random_nodes(size_t N, std::mt19937& gen, const std::string& name_prefix) {
+std::vector<Node*> Graph::add_random_nodes(size_t N, std::mt19937& gen, const std::string& name_prefix, bool run_semaphore) {
   std::vector<Node*> old_nodes;
   old_nodes.reserve(_nodes.size());
   for (auto& n : _nodes) {
@@ -240,7 +240,7 @@ std::vector<Node*> Graph::add_random_nodes(size_t N, std::mt19937& gen, const st
   for (size_t i = 0; i < N; ++i) {
     // Make names unique-ish; you can replace with your own global "iteration count"
     std::string name = name_prefix + "_" + std::to_string(_nodes.size()) + "_" + std::to_string(i);
-    new_nodes.push_back(insert_node(name));
+    new_nodes.push_back(insert_node(name, run_semaphore));
   }
 
   // If there were no old nodes, we can't connect to existing nodes
@@ -263,11 +263,11 @@ std::vector<Node*> Graph::add_random_nodes(size_t N, std::mt19937& gen, const st
     // Random direction, but always safe because nn is brand new (no other edges yet)
     if (coin(gen)) {
       if (!has_edge(ex, nn)) {
-        insert_edge(ex, nn);      // existing -> new
+        insert_edge(ex, nn, run_semaphore);      // existing -> new
       }
     } else {
       if (!has_edge(nn, ex)) {
-        insert_edge(nn, ex);      // new -> existing
+        insert_edge(nn, ex, run_semaphore);      // new -> existing
       }
     }
   }
@@ -653,44 +653,50 @@ void Graph::_topo_dfs(std::vector<T*>& topo_order, T* node) {
   topo_order.push_back(node);
 }
 
-void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
+void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore, bool first_run) {
 
   // std::cout << "total #threads available: " << std::thread::hardware_concurrency() << "\n";
 
   _taskflow.clear();
   _semaphore.reset(num_semaphore);
 
-  for(auto& node : _nodes) {
-    node._task = _taskflow.emplace([this, matrix_size, &node]() {
-      // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
-      size_t N = matrix_size;
-      size_t M = matrix_size;
-      size_t K = matrix_size;
-      std::vector<int> A(N*K, 1);
-      std::vector<int> B(K*M, 2);
-      std::vector<int> C(N*M);
-      for(size_t n=0; n<N; n++) {
-        for(size_t m=0; m<M; m++) {
-          int temp = 0;
-          for(size_t k=0; k<K; k++) {
-            temp += A[n*K + k] * B[k*M + m];
+  auto start_construct = std::chrono::steady_clock::now();
+  if(first_run) {
+    for(auto& node : _nodes) {
+      node._task = _taskflow.emplace([this, matrix_size, &node]() {
+        // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
+        size_t N = matrix_size;
+        size_t M = matrix_size;
+        size_t K = matrix_size;
+        std::vector<int> A(N*K, 1);
+        std::vector<int> B(K*M, 2);
+        std::vector<int> C(N*M);
+        for(size_t n=0; n<N; n++) {
+          for(size_t m=0; m<M; m++) {
+            int temp = 0;
+            for(size_t k=0; k<K; k++) {
+              temp += A[n*K + k] * B[k*M + m];
+            }
+            C[n*M + m] = temp;
           }
-          C[n*M + m] = temp;
         }
-      }
-    });
-  }
+      });
+    }
 
-  for(auto& node : _nodes) {
-    for(auto fanout : node._fanouts) {
-      node._task.precede(fanout->_to->_task);
+    for(auto& node : _nodes) {
+      for(auto fanout : node._fanouts) {
+        node._task.precede(fanout->_to->_task);
+      }
+    }
+
+    for(auto& node : _nodes) {
+      node._task.acquire(_semaphore);
+      node._task.release(_semaphore);
     }
   }
-
-  for(auto& node : _nodes) {
-    node._task.acquire(_semaphore);
-    node._task.release(_semaphore);
-  }
+  auto end_construct = std::chrono::steady_clock::now();
+  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::milliseconds>(end_construct-start_construct).count();
+  _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
 
   auto start = std::chrono::steady_clock::now();
   _executor.run(_taskflow).wait();

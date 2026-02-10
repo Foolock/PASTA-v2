@@ -37,6 +37,8 @@ class Node {
   private:
     std::string _name;  
 
+    bool _have_acquired_semaphore = false;
+
     int _id = -1;
 
     /*
@@ -118,22 +120,22 @@ class Graph {
     Graph(const std::string& filename);
 
      // basic ops
-    Node* insert_node(const std::string& name = "");
-    Edge* insert_edge(Node* from, Node* to);
-    void remove_node(Node* node);
-    void remove_edge(Edge* edge);
+    Node* insert_node(const std::string& name = "", bool run_semaphore = false);
+    Edge* insert_edge(Node* from, Node* to, bool run_semaphore = false);
+    void remove_node(Node* node, bool run_semaphore = false);
+    void remove_edge(Edge* edge, bool run_semaphore = false);
 
     // remove N nodes randomly
-    void remove_random_nodes(size_t N, std::mt19937& gen);
+    void remove_random_nodes(size_t N, std::mt19937& gen, bool run_semaphore = false);
 
     // remove N edges randomly
-    void remove_random_edges(size_t N, std::mt19937& gen);
+    void remove_random_edges(size_t N, std::mt19937& gen, bool run_semaphore = false);
 
     // add N edges randomly
-    size_t add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_multiplier = 20); 
+    size_t add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_multiplier = 20, bool run_semaphore = false); 
 
     // add N nodes randomly
-    std::vector<Node*> add_random_nodes(size_t N, std::mt19937& gen, const std::string& name_prefix = "new");
+    std::vector<Node*> add_random_nodes(size_t N, std::mt19937& gen, const std::string& name_prefix = "new", bool run_semaphore = false);
 
     // helper
     inline size_t num_nodes() const {
@@ -148,6 +150,9 @@ class Graph {
     void dump_graph();
     inline size_t get_incre_runtime_with_semaphore() const {
       return _incre_runtime_with_semaphore;
+    } 
+    inline size_t get_incre_runtime_with_semaphore_graph_construct() const {
+      return _incre_runtime_with_semaphore_graph_construct;
     } 
     inline size_t get_incre_runtime_with_cudaflow_partition() const {
       return _incre_runtime_with_cudaflow_partition;
@@ -175,7 +180,7 @@ class Graph {
     // run graph with taskflow
     void run_graph_before_partition(size_t matrix_size);
     void run_graph_after_partition(size_t matrix_size);
-    void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
+    void run_graph_semaphore(size_t matrix_size, size_t num_semaphore, bool first_run = true); // num_semaphore = max_parallelism
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
 
   private:
