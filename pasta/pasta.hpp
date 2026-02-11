@@ -182,7 +182,7 @@ class Graph {
     // run graph with taskflow
     void run_graph_before_partition(size_t matrix_size);
     void run_graph_after_partition(size_t matrix_size);
-    void run_graph_semaphore(size_t matrix_size, size_t num_semaphore, bool first_run = true); // num_semaphore = max_parallelism
+    void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
 
   private:
@@ -221,6 +221,7 @@ class Graph {
     tf::Taskflow _taskflow;
     tf::Executor _executor{std::thread::hardware_concurrency()};
     tf::Semaphore _semaphore{std::thread::hardware_concurrency()};  
+    bool _first_run = true;
 
 };
 

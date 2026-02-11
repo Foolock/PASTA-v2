@@ -53,7 +53,6 @@ int main(int argc, char* argv[]) {
   std::mt19937 gen(42);
   
   bool run_semaphore = true;
-  bool first_run = true;
 
   while (count < num_incre_itr) {
 
@@ -62,9 +61,7 @@ int main(int argc, char* argv[]) {
     // std::cout << "---------------------\n";
 
     // run with current semaphore setting
-    graph.run_graph_semaphore(matrix_size, num_semaphore, first_run);
-
-    first_run = false;
+    graph.run_graph_semaphore(matrix_size, num_semaphore);
 
     // get N random numbers
     std::vector<int> random_nodes = generate_random_nums(graph.num_nodes(), N, gen);
@@ -79,7 +76,7 @@ int main(int argc, char* argv[]) {
     graph.remove_random_edges(N, gen, run_semaphore);
 
     // add N edges randomly
-    graph.add_random_edges(N, gen, run_semaphore); 
+    graph.add_random_edges(N, gen, 20, run_semaphore); 
 
     // add N nodes randomly by connectint the new nodes 
     // to the existing nodes as dependents/successors  
@@ -103,8 +100,8 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
-  std::cout << "total constructtime with semaphore: " << graph.get_incre_runtime_with_semaphore_graph_construct() << " ms\n"; 
-  std::cout << "total runtime with semaphore: " << graph.get_incre_runtime_with_semaphore() << " ms\n"; 
+  std::cout << "total constructtime with semaphore: " << graph.get_incre_runtime_with_semaphore_graph_construct() << " us\n"; 
+  std::cout << "total runtime with semaphore: " << graph.get_incre_runtime_with_semaphore() << " us\n"; 
 
   return 0;
 }

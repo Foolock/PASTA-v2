@@ -77,7 +77,7 @@ Node* Graph::insert_node(const std::string& name, bool run_semaphore, size_t mat
     node_ptr->_task.release(_semaphore);
   }
   auto end_construct = std::chrono::steady_clock::now();
-  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::milliseconds>(end_construct-start_construct).count();
+  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
 
   return node_ptr;
@@ -112,7 +112,7 @@ Edge* Graph::insert_edge(Node* from, Node* to, bool run_semaphore) {
     from->_task.precede(to->_task);
   }
   auto end_construct = std::chrono::steady_clock::now();
-  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::milliseconds>(end_construct-start_construct).count();
+  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
 
   return edge_ptr;
@@ -137,7 +137,7 @@ void Graph::remove_node(Node* node, bool run_semaphore) {
     _taskflow.erase(node->_task);
   }
   auto end_construct = std::chrono::steady_clock::now();
-  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::milliseconds>(end_construct-start_construct).count();
+  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
 
   _nodes.erase(node->_node_satellite);
@@ -172,7 +172,7 @@ void Graph::remove_edge(Edge* edge, bool run_semaphore) {
     to->_task.remove_predecessors(from->_task);
   }
   auto end_construct = std::chrono::steady_clock::now();
-  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::milliseconds>(end_construct-start_construct).count();
+  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
 
   _edges.erase(edge->_satellite);
@@ -630,7 +630,7 @@ void Graph::run_graph_before_partition(size_t matrix_size) {
   auto start = std::chrono::steady_clock::now();
   executor.run(taskflow).wait();
   auto end = std::chrono::steady_clock::now();
-  size_t origin_taskflow_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
+  size_t origin_taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
 
   std::cout << "origin_taskflow_runtime: " << origin_taskflow_runtime
             << " ms\n";
@@ -712,7 +712,7 @@ void Graph::_topo_dfs(std::vector<T*>& topo_order, T* node) {
   topo_order.push_back(node);
 }
 
-void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore, bool first_run) {
+void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
 
   // std::cout << "total #threads available: " << std::thread::hardware_concurrency() << "\n";
 
@@ -720,7 +720,7 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore, bool f
   _semaphore.reset(num_semaphore);
 
   auto start_construct = std::chrono::steady_clock::now();
-  if(first_run) {
+  if(_first_run) {
     for(auto& node : _nodes) {
       node._task = _taskflow.emplace([this, matrix_size, &node]() {
         // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
@@ -754,13 +754,15 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore, bool f
     }
   }
   auto end_construct = std::chrono::steady_clock::now();
-  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::milliseconds>(end_construct-start_construct).count();
+  size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
+
+  _first_run = false;
 
   auto start = std::chrono::steady_clock::now();
   _executor.run(_taskflow).wait();
   auto end = std::chrono::steady_clock::now();
-  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
+  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
   _incre_runtime_with_semaphore += taskflow_runtime;
 
   // printf("For current iteration, taskflow runtime with #semaphores = %ld: %ld ms\n", num_semaphore, taskflow_runtime);
@@ -1061,7 +1063,7 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
   auto start = std::chrono::steady_clock::now();
   _executor.run(_taskflow).wait();
   auto end = std::chrono::steady_clock::now();
-  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
+  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
   _incre_runtime_with_cudaflow_partition += taskflow_runtime;
 
 }
