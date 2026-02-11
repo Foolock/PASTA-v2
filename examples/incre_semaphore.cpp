@@ -53,6 +53,7 @@ int main(int argc, char* argv[]) {
   std::mt19937 gen(42);
   
   bool run_semaphore = true;
+  bool first_run = true;
 
   while (count < num_incre_itr) {
 
@@ -61,7 +62,9 @@ int main(int argc, char* argv[]) {
     // std::cout << "---------------------\n";
 
     // run with current semaphore setting
-    graph.run_graph_semaphore(matrix_size, num_semaphore);
+    graph.run_graph_semaphore(matrix_size, num_semaphore, first_run);
+
+    first_run = false;
 
     // get N random numbers
     std::vector<int> random_nodes = generate_random_nums(graph.num_nodes(), N, gen);
@@ -70,17 +73,17 @@ int main(int argc, char* argv[]) {
     std::sort(random_edges.begin(), random_edges.end());
 
     // remove N nodes randomly
-    graph.remove_random_nodes(N, gen);
+    graph.remove_random_nodes(N, gen, run_semaphore);
 
     // remove N edges randomly
-    graph.remove_random_edges(N, gen);
+    graph.remove_random_edges(N, gen, run_semaphore);
 
     // add N edges randomly
-    graph.add_random_edges(N, gen); 
+    graph.add_random_edges(N, gen, run_semaphore); 
 
     // add N nodes randomly by connectint the new nodes 
     // to the existing nodes as dependents/successors  
-    graph.add_random_nodes(N, gen);
+    graph.add_random_nodes(N, gen, "new", run_semaphore, matrix_size);
 
     if(graph.has_cycle_before_partition() == true) {
       std::cerr << "has cycle!\n";
