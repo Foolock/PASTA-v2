@@ -911,7 +911,6 @@ void Graph::partition_cudaflow(size_t num_streams) {
   for(auto& level : level_list) {
     for(auto node : level) {
       int stream_id_cur = (node->_lid) % num_streams; 
-      /*
       Node* last_assign = NULL; // "last" predecessor in the same stream 
                                 // stream_id_prev to build dependency edge
       for(auto fanin : node->_fanins) {
@@ -931,18 +930,7 @@ void Graph::partition_cudaflow(size_t num_streams) {
         last_assign->_reconstructed_fanouts.push_back(node);
         node->_reconstructed_fanins.push_back(last_assign);
       }
-      */
-      // don't remove redundant dependencies for incremental partitioning
-      for(auto fanin : node->_fanins) {
-        Node* predecessor = fanin->_from; 
-        int stream_id_prev = (predecessor->_lid) % num_streams;
-        if(stream_id_prev != stream_id_cur) {
-          predecessor->_reconstructed_fanouts.push_back(node);
-          node->_reconstructed_fanins.push_back(predecessor);
-        }
-      }
       streams[stream_id_cur].push_back(node);
-      /*
       for(auto fanout : node->_fanouts) {
         Node* successor = fanout->_to;
         int stream_id_suc = (successor->_lid) % num_streams;
@@ -950,7 +938,6 @@ void Graph::partition_cudaflow(size_t num_streams) {
           successor->_sm = stream_id_cur;
         }
       }
-      */
     }
   }
 
@@ -1088,6 +1075,113 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
   size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
   _incre_runtime_with_cudaflow_partition += taskflow_runtime;
 
+}
+
+void Graph::partition_cudaflow_incremental(size_t num_streams) {
+
+  // TODO: instead of reset the reconstructed graph, do it incrementally
+  int id = 0;
+  for(auto& node : _nodes) {
+    node._id = id++;
+    node._topo_id = -1;
+    node._level = -1;
+    node._lid = -1;
+    node._extra_fanin = nullptr;
+    node._extra_fanout = nullptr;
+  }
+
+  // get level list 
+  // assign lid to each node
+  std::vector<std::vector<Node*>> level_list = _get_level_list(); 
+
+  // use list to store nodes for each stream
+  std::vector<std::list<Node*>> streams(num_streams);
+
+  auto start = std::chrono::steady_clock::now();
+  for(auto& level : level_list) {
+    for(auto node : level) {
+      int stream_id_cur = (node->_lid) % num_streams; 
+      streams[stream_id_cur].push_back(node);
+    }
+  }
+
+  // for nodes in the same streams, connect them as a linear chain
+  for(auto list : streams) {
+    for(auto it = list.begin(); it != list.end(); it++) {
+      auto next = std::next(it);
+      if(next != list.end()) {
+        (*it)->_reconstructed_fanouts.push_back((*next));
+        (*next)->_reconstructed_fanins.push_back((*it));
+        (*it)->_extra_fanout = *next;
+        (*next)->_extra_fanin = *it;
+      }
+    }
+  }
+
+  auto end = std::chrono::steady_clock::now();
+  size_t partition_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  _incre_partition_runtime_with_cudaflow_partition += partition_runtime;
+}
+
+bool Graph::is_incre_cudaflow_partition_share_same_topo_order() {
+
+  // store the union graph of two DAGs as adjacent list
+  std::vector<std::vector<int>> adj(_nodes.size());
+  std::vector<int> indegrees(_nodes.size(), 0);
+
+  // add original DAG to adj
+  for(auto& node : _nodes) {
+    indegrees[node._id] = node._fanins.size();
+    for(auto fanout : node._fanouts) {
+      Node* fanout_node = fanout->_to;
+      adj[node._id].push_back(fanout_node->_id);
+    }
+  }
+
+  // add cudaflow partitioned DAG to adj
+  // here we increment the indegrees and add more edges
+  // there could be duplicate edges in union graph
+  // but the topological sort can handle this
+  for(auto& node : _nodes) {
+    indegrees[node._id] += node._fanins.size();
+    // the first node in the stream does not have extra fanin
+    if(node._extra_fanin) {
+      indegrees[node._id] += 1; // one extra fanin added by incremental cudaflow partitioning
+    }
+    for(auto fanout : node._fanouts) {
+      Node* fanout_node = fanout->_to;
+      adj[node._id].push_back(fanout_node->_id);
+    }
+    // the last node in the stream does not have extra fanout
+    if(node._extra_fanout) {
+      adj[node._id].push_back(node._extra_fanout->_id); // one extra fanout added by incremental 
+                                                        // cudaflow partitioning
+    }
+  }
+
+  // run topological sort to check if union graph is acyclic
+  std::queue<int> q;
+  for(int i = 0; i < static_cast<int>(_nodes.size()); i++) {
+    if(indegrees[i] == 0) {
+      q.push(i);
+    }
+  }
+
+  size_t visited = 0;
+  while(!q.empty()) {
+    
+    int cur = q.front();
+    q.pop();
+    visited++;
+
+    for(int successor : adj[cur]) {
+      if(--indegrees[successor] == 0) {
+        q.push(successor);
+      }
+    }
+  }
+
+  return (visited == _nodes.size());
 }
 
 } // end of namespace pasta

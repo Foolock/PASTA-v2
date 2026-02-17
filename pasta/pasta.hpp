@@ -70,6 +70,13 @@ class Node {
     std::vector<Node*> _reconstructed_fanins;
     std::vector<Node*> _reconstructed_fanouts;
 
+    // Incremental cudaflow partitioning:
+    // Use cudaflow partitioning to add
+    // just one extra fanin/fanout to limit the maximum parallelism
+    // the other dependencies follow the original graph
+    Node* _extra_fanin;
+    Node* _extra_fanout;
+
 };
 
 class Edge {
@@ -178,12 +185,18 @@ class Graph {
     // reconstruct graph based on cudaflow
     void partition_cudaflow(size_t num_streams = 4);
 
+    // Incremental CUDAFlow partition
+    // just add one extra fanin/fanout 
+    void partition_cudaflow_incremental(size_t num_streams = 4);
+
     // check if two DAGs that shares same set of vertices, 
     // one partitioned by cudaflow, one original, share at least one topological order
     // we just need to check if the union graph of G1 and G2 is acyclic
     // if it is, then they share at least one topological order
     // union graph is "same set of vertices built on all the edges in G1 and G2"
     bool is_cudaflow_partition_share_same_topo_order();
+    // checker for incremental cudaflow partitioning
+    bool is_incre_cudaflow_partition_share_same_topo_order();
 
     // run graph with taskflow
     void run_graph_before_partition(size_t matrix_size);

@@ -2,7 +2,7 @@
 
 int main() {
 
-  pasta::Graph partitioner("../benchmarks/des_perf.txt"); 
+  pasta::Graph partitioner("../benchmarks/simple.txt"); 
 
   // each task in the task graph is a NxN square matrix multiplication
   size_t matrix_size = 8;  
@@ -15,12 +15,17 @@ int main() {
     std::exit(EXIT_FAILURE);
   }
 
-  partitioner.run_graph_cudaflow_partition(matrix_size, 8);
-  
-  if(!partitioner.is_cudaflow_partition_share_same_topo_order()) {
+  // partitioner.run_graph_cudaflow_partition(matrix_size, 8);
+  partitioner.partition_cudaflow_incremental(4);
+  if(!partitioner.is_incre_cudaflow_partition_share_same_topo_order()) {
     std::cerr << "cudaflow partitioned graph has cycle.\n";
     std::exit(EXIT_FAILURE);
   }
+  
+  // if(!partitioner.is_cudaflow_partition_share_same_topo_order()) {
+  //   std::cerr << "cudaflow partitioned graph has cycle.\n";
+  //   std::exit(EXIT_FAILURE);
+  // }
 
   return 0;
 }
