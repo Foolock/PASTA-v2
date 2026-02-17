@@ -159,6 +159,12 @@ class Graph {
     inline size_t get_incre_runtime_with_cudaflow_partition() const {
       return _incre_runtime_with_cudaflow_partition;
     }
+    inline size_t get_incre_partition_runtime_with_cudaflow_partition() const {
+      return _incre_partition_runtime_with_cudaflow_partition;
+    }
+    inline size_t get_incre_construct_runtime_with_cudaflow() const {
+      return _incre_construct_runtime_with_cudaflow;
+    }
     void test_func();
 
     // check cycle
@@ -217,6 +223,8 @@ class Graph {
 
     // incremental update with cudaflow_partition runtime
     size_t _incre_runtime_with_cudaflow_partition = 0;
+    size_t _incre_partition_runtime_with_cudaflow_partition = 0;
+    size_t _incre_construct_runtime_with_cudaflow = 0;
 
     tf::Taskflow _taskflow;
     tf::Executor _executor{std::thread::hardware_concurrency()};

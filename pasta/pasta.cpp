@@ -907,9 +907,11 @@ void Graph::partition_cudaflow(size_t num_streams) {
   // use list to store nodes for each stream
   std::vector<std::list<Node*>> streams(num_streams);
 
+  auto start = std::chrono::steady_clock::now();
   for(auto& level : level_list) {
     for(auto node : level) {
       int stream_id_cur = (node->_lid) % num_streams; 
+      /*
       Node* last_assign = NULL; // "last" predecessor in the same stream 
                                 // stream_id_prev to build dependency edge
       for(auto fanin : node->_fanins) {
@@ -929,7 +931,18 @@ void Graph::partition_cudaflow(size_t num_streams) {
         last_assign->_reconstructed_fanouts.push_back(node);
         node->_reconstructed_fanins.push_back(last_assign);
       }
+      */
+      // don't remove redundant dependencies for incremental partitioning
+      for(auto fanin : node->_fanins) {
+        Node* predecessor = fanin->_from; 
+        int stream_id_prev = (predecessor->_lid) % num_streams;
+        if(stream_id_prev != stream_id_cur) {
+          predecessor->_reconstructed_fanouts.push_back(node);
+          node->_reconstructed_fanins.push_back(predecessor);
+        }
+      }
       streams[stream_id_cur].push_back(node);
+      /*
       for(auto fanout : node->_fanouts) {
         Node* successor = fanout->_to;
         int stream_id_suc = (successor->_lid) % num_streams;
@@ -937,6 +950,7 @@ void Graph::partition_cudaflow(size_t num_streams) {
           successor->_sm = stream_id_cur;
         }
       }
+      */
     }
   }
 
@@ -950,6 +964,10 @@ void Graph::partition_cudaflow(size_t num_streams) {
       }
     }
   }
+
+  auto end = std::chrono::steady_clock::now();
+  size_t partition_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  _incre_partition_runtime_with_cudaflow_partition += partition_runtime;
 
   // if(!is_cudaflow_partition_share_same_topo_order()) {
   //   throw std::runtime_error("they do not share same topological order.\n");
@@ -1033,6 +1051,7 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
 
   _taskflow.clear();
 
+  auto start1 = std::chrono::steady_clock::now();
   for(auto& node : _nodes) {
     node._task = _taskflow.emplace([this, matrix_size, &node]() {
       // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
@@ -1059,6 +1078,9 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
       node._task.precede(fanout_node->_task);
     }
   }
+  auto end1 = std::chrono::steady_clock::now();
+  size_t construct_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end1-start1).count();
+  _incre_construct_runtime_with_cudaflow += construct_runtime;
 
   auto start = std::chrono::steady_clock::now();
   _executor.run(_taskflow).wait();

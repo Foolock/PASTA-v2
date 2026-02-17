@@ -98,8 +98,9 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
+  std::cout << "total partition runtime with cudaflow partition: " << graph.get_incre_partition_runtime_with_cudaflow_partition() << " us\n"; 
+  std::cout << "total construct runtime with cudaflow partition: " << graph.get_incre_construct_runtime_with_cudaflow() << " us\n"; 
   std::cout << "total runtime with cudaflow partition: " << graph.get_incre_runtime_with_cudaflow_partition() << " us\n"; 
-
   return 0;
 }
 
