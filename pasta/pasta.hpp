@@ -210,6 +210,7 @@ class Graph {
     void run_graph_after_partition(size_t matrix_size);
     void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
+    void run_graph_cudaflow_partition_incremental(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
 
   private:
 

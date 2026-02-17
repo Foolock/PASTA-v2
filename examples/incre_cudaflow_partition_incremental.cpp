@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
 
   std::mt19937 gen(42);
 
-  pasta::RunMode mode = pasta::RunMode::Partition;
+  pasta::RunMode mode = pasta::RunMode::IncrementalPartition;
 
   while (count < num_incre_itr) {
 
@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
     // std::cout << "---------------------\n";
 
     // run with current semaphore setting
-    graph.run_graph_cudaflow_partition(matrix_size, num_streams);
+    graph.run_graph_cudaflow_partition_incremental(matrix_size, num_streams);
 
     // get N random numbers
     std::vector<int> random_nodes = generate_random_nums(graph.num_nodes(), N, gen);

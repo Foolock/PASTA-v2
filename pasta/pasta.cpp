@@ -53,8 +53,11 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
   node_ptr->_id = id;
 
   auto start_construct = std::chrono::steady_clock::now();
-  // if run taskflow with semaphore
-  if(mode == RunMode::Semaphore) {
+  // if run taskflow with semaphore or incremental partition
+  auto needs_task = [](RunMode m) {
+    return m == RunMode::Semaphore || m == RunMode::IncrementalPartition;
+  };
+  if(needs_task(mode)) {
     node_ptr->_task = _taskflow.emplace([this, matrix_size]() {
       // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
       size_t N = matrix_size;
@@ -73,12 +76,16 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
         }
       }
     });
-    node_ptr->_task.acquire(_semaphore);
-    node_ptr->_task.release(_semaphore);
+    if(mode == RunMode::Semaphore) {
+      node_ptr->_task.acquire(_semaphore);
+      node_ptr->_task.release(_semaphore);
+    }
   }
   auto end_construct = std::chrono::steady_clock::now();
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
+  // we won't run semaphore and partitioning in the same program so I just add them both
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
+  _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
 
   return node_ptr;
 }
@@ -108,12 +115,13 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode) {
 
   auto start_construct = std::chrono::steady_clock::now();
   // if run taskflow with semaphore
-  if(mode == RunMode::Semaphore) {
+  if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
     from->_task.precede(to->_task);
   }
   auto end_construct = std::chrono::steady_clock::now();
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
+  _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
 
   return edge_ptr;
 }
@@ -133,12 +141,13 @@ void Graph::remove_node(Node* node, RunMode mode) {
   
   auto start_construct = std::chrono::steady_clock::now();
   // if run taskflow with semaphore
-  if(mode == RunMode::Semaphore) {
+  if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
     _taskflow.erase(node->_task);
   }
   auto end_construct = std::chrono::steady_clock::now();
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
+  _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
 
   _nodes.erase(node->_node_satellite);
 }
@@ -167,13 +176,14 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
 
   auto start_construct = std::chrono::steady_clock::now();
   // if run taskflow with semaphore
-  if(mode == RunMode::Semaphore) {
+  if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
     from->_task.remove_successors(to->_task);
     to->_task.remove_predecessors(from->_task);
   }
   auto end_construct = std::chrono::steady_clock::now();
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
+  _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
 
   _edges.erase(edge->_satellite);
 }
@@ -1068,6 +1078,59 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
   auto end1 = std::chrono::steady_clock::now();
   size_t construct_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end1-start1).count();
   _incre_construct_runtime_with_cudaflow += construct_runtime;
+
+  auto start = std::chrono::steady_clock::now();
+  _executor.run(_taskflow).wait();
+  auto end = std::chrono::steady_clock::now();
+  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  _incre_runtime_with_cudaflow_partition += taskflow_runtime;
+
+}
+
+void Graph::run_graph_cudaflow_partition_incremental(size_t matrix_size, size_t num_streams) { // num_streams = max_parallelism
+
+  if(_first_run) {
+    partition_cudaflow_incremental(num_streams);
+
+    _taskflow.clear();
+
+    auto start1 = std::chrono::steady_clock::now();
+    for(auto& node : _nodes) {
+      node._task = _taskflow.emplace([this, matrix_size, &node]() {
+        // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
+        size_t N = matrix_size;
+        size_t M = matrix_size;
+        size_t K = matrix_size;
+        std::vector<int> A(N*K, 1);
+        std::vector<int> B(K*M, 2);
+        std::vector<int> C(N*M);
+        for(size_t n=0; n<N; n++) {
+          for(size_t m=0; m<M; m++) {
+            int temp = 0;
+            for(size_t k=0; k<K; k++) {
+              temp += A[n*K + k] * B[k*M + m];
+            }
+            C[n*M + m] = temp;
+          }
+        }
+      });
+    }
+
+    for(auto& node : _nodes) {
+      for(auto fanout : node._fanouts) {
+        node._task.precede(fanout->_to->_task);
+      }
+      // add extra dependency from partitioning to limit max parallelism
+      if(node._extra_fanout) {
+        node._task.precede(node._extra_fanout->_task);
+      }
+    }
+    auto end1 = std::chrono::steady_clock::now();
+    size_t construct_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end1-start1).count();
+    _incre_construct_runtime_with_cudaflow += construct_runtime;
+  }
+
+  _first_run = false;
 
   auto start = std::chrono::steady_clock::now();
   _executor.run(_taskflow).wait();
