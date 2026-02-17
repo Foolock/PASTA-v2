@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
 
   std::mt19937 gen(42);
   
-  bool run_semaphore = true;
+  pasta::RunMode mode = pasta::RunMode::Semaphore;
 
   while (count < num_incre_itr) {
 
@@ -70,17 +70,17 @@ int main(int argc, char* argv[]) {
     std::sort(random_edges.begin(), random_edges.end());
 
     // remove N nodes randomly
-    graph.remove_random_nodes(N, gen, run_semaphore);
+    graph.remove_random_nodes(N, gen, mode);
 
     // remove N edges randomly
-    graph.remove_random_edges(N, gen, run_semaphore);
+    graph.remove_random_edges(N, gen, mode);
 
     // add N edges randomly
-    graph.add_random_edges(N, gen, 20, run_semaphore); 
+    graph.add_random_edges(N, gen, 20, mode); 
 
     // add N nodes randomly by connectint the new nodes 
     // to the existing nodes as dependents/successors  
-    graph.add_random_nodes(N, gen, "new", run_semaphore, matrix_size);
+    graph.add_random_nodes(N, gen, "new", mode, matrix_size);
 
     if(graph.has_cycle_before_partition() == true) {
       std::cerr << "has cycle!\n";

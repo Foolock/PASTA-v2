@@ -9,6 +9,13 @@
 
 namespace pasta {
 
+enum class RunMode {
+  None,
+  Semaphore,
+  IncrementalPartition,
+  Partition
+};
+
 class Node;
 class Edge;
 class CNode;
@@ -127,24 +134,24 @@ class Graph {
     Graph(const std::string& filename);
 
      // basic ops
-    Node* insert_node(const std::string& name = "", bool run_semaphore = false, size_t matrix_size = 8);
-    Edge* insert_edge(Node* from, Node* to, bool run_semaphore = false);
-    void remove_node(Node* node, bool run_semaphore = false);
-    void remove_edge(Edge* edge, bool run_semaphore = false);
+    Node* insert_node(const std::string& name = "", RunMode mode = RunMode::None, size_t matrix_size = 8);
+    Edge* insert_edge(Node* from, Node* to, RunMode mode = RunMode::None);
+    void remove_node(Node* node, RunMode mode = RunMode::None);
+    void remove_edge(Edge* edge, RunMode mode = RunMode::None);
 
     // remove N nodes randomly
-    void remove_random_nodes(size_t N, std::mt19937& gen, bool run_semaphore = false);
+    void remove_random_nodes(size_t N, std::mt19937& gen, RunMode mode = RunMode::None);
 
     // remove N edges randomly
-    void remove_random_edges(size_t N, std::mt19937& gen, bool run_semaphore = false);
+    void remove_random_edges(size_t N, std::mt19937& gen, RunMode mode = RunMode::None);
 
     // add N edges randomly
-    size_t add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_multiplier = 20, bool run_semaphore = false); 
+    size_t add_random_edges(size_t N, std::mt19937& gen, size_t max_tries_multiplier = 20, RunMode mode = RunMode::None); 
 
     // add N nodes randomly
     std::vector<Node*> add_random_nodes(size_t N, std::mt19937& gen, 
                                         const std::string& name_prefix = "new", 
-                                        bool run_semaphore = false, size_t matrix_size = 8);
+                                        RunMode mode = RunMode::None, size_t matrix_size = 8);
 
     // helper
     inline size_t num_nodes() const {
