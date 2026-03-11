@@ -99,6 +99,8 @@ class Edge {
 
     std::list<Edge>::iterator _satellite;
 
+    bool _is_limit_parallelism = false;
+
 };
 
 class CNode {
@@ -135,7 +137,8 @@ class Graph {
 
      // basic ops
     Node* insert_node(const std::string& name = "", RunMode mode = RunMode::None, size_t matrix_size = 8);
-    Edge* insert_edge(Node* from, Node* to, RunMode mode = RunMode::None);
+    // if is_limit_parallelism = true, this edge is used to limit parallelism and thus cannot be removed
+    Edge* insert_edge(Node* from, Node* to, RunMode mode = RunMode::None, bool is_limit_parallelism = false);
     void remove_node(Node* node, RunMode mode = RunMode::None);
     void remove_edge(Edge* edge, RunMode mode = RunMode::None);
 
@@ -202,15 +205,12 @@ class Graph {
     // if it is, then they share at least one topological order
     // union graph is "same set of vertices built on all the edges in G1 and G2"
     bool is_cudaflow_partition_share_same_topo_order();
-    // checker for incremental cudaflow partitioning
-    bool is_incre_cudaflow_partition_share_same_topo_order();
 
     // run graph with taskflow
     void run_graph_before_partition(size_t matrix_size);
     void run_graph_after_partition(size_t matrix_size);
     void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
-    void run_graph_cudaflow_partition_incremental(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
 
   private:
 
@@ -227,6 +227,9 @@ class Graph {
 
     // get topological order of current graph using BFS
     std::vector<Node*> _get_topo_order_bfs();
+
+    // get topological order of current graph using DFS
+    std::vector<Node*> _get_topo_order_dfs(); 
 
     // get reversed topological order of current graph using DFS 
     void _get_topo_reverse_order_dfs(std::vector<Node*>& topo); 

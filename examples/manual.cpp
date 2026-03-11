@@ -21,21 +21,30 @@ int main() {
   // graph.remove_edge(AC);
   // graph.dump_graph();
 
-  pasta::Node* n1 = graph.insert_node("n1");
-  pasta::Node* n2 = graph.insert_node("n2");
-  pasta::Node* n3 = graph.insert_node("n3");
-  pasta::Node* n4 = graph.insert_node("n4");
-  pasta::Node* n5 = graph.insert_node("n5");
-  pasta::Node* n6 = graph.insert_node("n6");
-  pasta::Node* n7 = graph.insert_node("n7");
+  pasta::Node* n0 = graph.insert_node("0");
+  pasta::Node* n1 = graph.insert_node("1");
+  pasta::Node* n2 = graph.insert_node("2");
+  pasta::Node* n3 = graph.insert_node("3");
+  pasta::Node* n4 = graph.insert_node("4");
+  pasta::Node* n5 = graph.insert_node("5");
+  pasta::Node* n6 = graph.insert_node("6");
+  pasta::Node* n7 = graph.insert_node("7");
+  pasta::Node* n8 = graph.insert_node("8");
+  pasta::Node* n9 = graph.insert_node("9");
+  pasta::Node* n10 = graph.insert_node("10");
 
-  pasta::Edge* n1n3 = graph.insert_edge(n1, n3);
-  pasta::Edge* n1n4 = graph.insert_edge(n1, n4);
-  pasta::Edge* n1n5 = graph.insert_edge(n1, n5);
-  pasta::Edge* n3n7 = graph.insert_edge(n3, n7);
-  pasta::Edge* n4n7 = graph.insert_edge(n4, n7);
-  pasta::Edge* n5n7 = graph.insert_edge(n5, n7);
-  pasta::Edge* n3n6 = graph.insert_edge(n3, n6);
+  graph.insert_edge(n0, n1);
+  graph.insert_edge(n1, n2);
+  graph.insert_edge(n2, n3);
+  graph.insert_edge(n3, n10);
+  graph.insert_edge(n0, n4);
+  graph.insert_edge(n4, n5);
+  graph.insert_edge(n5, n6);
+  graph.insert_edge(n6, n10);
+  graph.insert_edge(n0, n7);
+  graph.insert_edge(n7, n8);
+  graph.insert_edge(n8, n9);
+  graph.insert_edge(n9, n10);
 
   graph.dump_graph();
 

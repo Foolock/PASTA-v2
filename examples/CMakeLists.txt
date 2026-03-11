@@ -6,7 +6,6 @@ set(PASTA_EXAMPLES
   run
   incre_semaphore 
   incre_cudaflow_partition 
-  incre_cudaflow_partition_incremental
   mis
   cudaflow_partition
   semaphore
