@@ -3,7 +3,8 @@ enable_testing()
 include(${PASTA_3RD_PARTY_DIR}/doctest/doctest.cmake)
 
 list(APPEND PASTA_UNITTESTS
-check_cudaflow_partition
+  check_cudaflow_partition
+  check_modify_edges
 )
 
 string(FIND '${CMAKE_CXX_FLAGS}' "-fsanitize" sanitize)

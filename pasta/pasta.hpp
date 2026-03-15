@@ -213,7 +213,13 @@ class Graph {
     void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
 
+    bool process_backward_edges();
+
     void generate_topo_order();
+
+    bool check_topo_iterators_and_pos() const;
+    bool is_topo_nodes_valid() const;
+    bool validate_modify_edge() const;
 
   private:
 
@@ -247,8 +253,6 @@ class Graph {
 
     void _build_partitioned_graph();
 
-    bool _process_backward_edges();
-
     uint64_t _cur_dfs_tag = 1; // this tag should be enough for 1k incremental iterations
                                // each iteration we increment the tag multiple times
     bool _restricted_dfs(Node* from, Node* to);
@@ -261,9 +265,6 @@ class Graph {
 
     // perform a full relabel
     void _relabel_full();
-
-    bool _check_topo_iterators_and_pos();
-    bool _is_topo_nodes_valid();
 
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;

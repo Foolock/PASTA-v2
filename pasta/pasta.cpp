@@ -862,7 +862,7 @@ void Graph::test_func() {
   // }
   // std::cout << "\n";
 
-  if(!_process_backward_edges()) {
+  if(!process_backward_edges()) {
     throw std::runtime_error("The topological order is not maintained correctly");
   }
 
@@ -1165,7 +1165,7 @@ void Graph::generate_topo_order() {
 
 }
 
-bool Graph::_process_backward_edges() {
+bool Graph::process_backward_edges() {
 
   while(!_backward_edges.empty()) {
     Edge* e = _backward_edges.front();
@@ -1220,15 +1220,15 @@ bool Graph::_process_backward_edges() {
       _relabel_after_left_to_end(from, moved_size);
     }
 
-    if(!_check_topo_iterators_and_pos()) {
-      return false;
-    }
+    // if(!check_topo_iterators_and_pos()) {
+    //   return false;
+    // }
 
   }
 
-  if(!_is_topo_nodes_valid()) {
-    return false;
-  }
+  // if(!is_topo_nodes_valid()) {
+  //   return false;
+  // }
 
   return true;
 
@@ -1278,7 +1278,7 @@ bool Graph::_restricted_dfs(Node* from, Node* to) {
 
 }
 
-bool Graph::_check_topo_iterators_and_pos() {
+bool Graph::check_topo_iterators_and_pos() const {
   for (auto it = _topo_nodes.begin(); it != _topo_nodes.end(); ++it) {
     if((*it)->_topo_it != it) {
       return false;
@@ -1293,7 +1293,7 @@ bool Graph::_check_topo_iterators_and_pos() {
   return true;
 }
 
-bool Graph::_is_topo_nodes_valid() {
+bool Graph::is_topo_nodes_valid() const {
 
   std::unordered_map<Node*, size_t> pos;
 
@@ -1312,6 +1312,10 @@ bool Graph::_is_topo_nodes_valid() {
 
   return true;
 
+}
+
+bool Graph::validate_modify_edge() const {
+  return check_topo_iterators_and_pos() && is_topo_nodes_valid();
 }
 
 void Graph::_relabel_after_from_until(Node* left, Node* right, size_t k) {
