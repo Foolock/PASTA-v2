@@ -263,6 +263,7 @@ class Graph {
     void _relabel_full();
 
     bool _check_topo_iterators_and_pos();
+    bool _is_topo_nodes_valid();
 
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;

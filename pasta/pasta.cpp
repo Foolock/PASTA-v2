@@ -855,12 +855,12 @@ std::vector<Node*> Graph::_get_topo_order_bfs() {
 
 void Graph::test_func() {
 
-  dump_graph();
+  // dump_graph();
 
-  for(auto node_ptr : _topo_nodes) {
-    std::cout << node_ptr->_name << "(" << node_ptr->_pos << ") ";
-  }
-  std::cout << "\n";
+  // for(auto node_ptr : _topo_nodes) {
+  //   std::cout << node_ptr->_name << "(" << node_ptr->_pos << ") ";
+  // }
+  // std::cout << "\n";
 
   if(!_process_backward_edges()) {
     throw std::runtime_error("The topological order is not maintained correctly");
@@ -1171,8 +1171,8 @@ bool Graph::_process_backward_edges() {
     Edge* e = _backward_edges.front();
     _backward_edges.pop();
 
-    std::cout << "backward edge: " << e->_from->_name << "(" << e->_from->_pos << ") -> "
-                                   << e->_to->_name << "(" << e->_to->_pos << ")\n";
+    // std::cout << "backward edge: " << e->_from->_name << "(" << e->_from->_pos << ") -> "
+    //                                << e->_to->_name << "(" << e->_to->_pos << ")\n";
 
     Node* from = e->_from;
     Node* to = e->_to;
@@ -1200,11 +1200,11 @@ bool Graph::_process_backward_edges() {
       }
     }
 
-    std::cout << "moved: ";
-    for(auto n : moved) {
-      std::cout << n->_name << " ";
-    }
-    std::cout << "\n";
+    // std::cout << "moved: ";
+    // for(auto n : moved) {
+    //   std::cout << n->_name << " ";
+    // }
+    // std::cout << "\n";
 
     // save moved size and old right boundary before insertion
     size_t moved_size = moved.size();
@@ -1224,6 +1224,10 @@ bool Graph::_process_backward_edges() {
       return false;
     }
 
+  }
+
+  if(!_is_topo_nodes_valid()) {
+    return false;
   }
 
   return true;
@@ -1287,6 +1291,27 @@ bool Graph::_check_topo_iterators_and_pos() {
     }
   }
   return true;
+}
+
+bool Graph::_is_topo_nodes_valid() {
+
+  std::unordered_map<Node*, size_t> pos;
+
+  size_t idx = 0;
+  for(auto node : _topo_nodes) {
+    pos[node] = idx++;
+  }
+  for(auto from : _topo_nodes) {
+    for(auto fanout : from->_fanouts) {
+      Node* to = fanout->_to;
+      if(pos[from] >= pos[to]) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+
 }
 
 void Graph::_relabel_after_from_until(Node* left, Node* right, size_t k) {
