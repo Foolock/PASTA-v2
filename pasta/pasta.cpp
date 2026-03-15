@@ -1220,9 +1220,10 @@ bool Graph::process_backward_edges() {
       _relabel_after_left_to_end(from, moved_size);
     }
 
-    // if(!check_topo_iterators_and_pos()) {
-    //   return false;
-    // }
+    if(!check_topo_iterators_and_pos()) {
+      throw std::runtime_error("topo_itr and pos wrong");
+      return false;
+    }
 
   }
 
@@ -1329,18 +1330,20 @@ void Graph::_relabel_after_from_until(Node* left, Node* right, size_t k) {
 
   double step = (right_pos - left_pos) / static_cast<double>(k + 1);
 
-  if(step <= 1e-12) {
+  // if(step <= 1e-12) {
+  //   std::cerr << "here?\n";
+  //   _relabel_full();
+  //   return;
+  // }
+  if(step <= 0.0 || left_pos + step == left_pos || right_pos - step == right_pos) {
     _relabel_full();
     return;
   }
 
-  double pos = left_pos + step;
-
   auto it = std::next(left->_topo_it);
 
   for(size_t i=0; i<k; ++i, ++it) {
-    (*it)->_pos = pos;
-    pos += step;
+    (*it)->_pos = left_pos + step * static_cast<double>(i + 1);
   }
 
 }

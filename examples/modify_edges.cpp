@@ -70,7 +70,12 @@ int main(int argc, char* argv[]) {
       std::exit(EXIT_FAILURE);
     }
 
-    graph.test_func();
+    graph.process_backward_edges();
+
+    if(!graph.validate_modify_edge()) {
+      std::cerr << "num_itr = " << num_incre_itr << "\n";
+      throw std::runtime_error("The topological order is not maintained correctly");
+    }
 
     ++count;
   }
