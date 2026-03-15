@@ -77,12 +77,13 @@ class Node {
     std::vector<Node*> _reconstructed_fanins;
     std::vector<Node*> _reconstructed_fanouts;
 
-    // Incremental cudaflow partitioning:
-    // Use cudaflow partitioning to add
-    // just one extra fanin/fanout to limit the maximum parallelism
-    // the other dependencies follow the original graph
-    Node* _extra_fanin;
-    Node* _extra_fanout;
+    // pointer in _topo_nodes
+    std::list<Node*>::iterator _topo_it;
+    
+    // indicate its position in the topological sequence
+    double _pos = 0.0;
+
+    uint64_t _dfs_tag = 0;
 
 };
 
@@ -212,6 +213,8 @@ class Graph {
     void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
 
+    void generate_topo_order();
+
   private:
 
     size_t _partition_size = 0;
@@ -221,6 +224,9 @@ class Graph {
     std::list<Edge> _edges;
     std::list<CNode> _cnodes;
     std::list<CEdge> _cedges;
+
+    std::list<Node*> _topo_nodes;
+    std::queue<Edge*> _backward_edges;
 
     // get level list of current graph 
     std::vector<std::vector<Node*>> _get_level_list();
@@ -240,6 +246,23 @@ class Graph {
     void _assign_cluster_id(Node* node_ptr, std::vector<std::atomic<size_t>>& cluster_cnt, std::atomic<int>& max_cluster_id);
 
     void _build_partitioned_graph();
+
+    bool _process_backward_edges();
+
+    uint64_t _cur_dfs_tag = 1; // this tag should be enough for 1k incremental iterations
+                               // each iteration we increment the tag multiple times
+    bool _restricted_dfs(Node* from, Node* to);
+
+    // left  | k nodes_to_relabel | right
+    void _relabel_after_from_until(Node* left, Node* right, size_t k);
+
+    // left  | k nodes_to_relabel | (empty, end) 
+    void _relabel_after_left_to_end(Node* left, size_t k);
+
+    // perform a full relabel
+    void _relabel_full();
+
+    bool _check_topo_iterators_and_pos();
 
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;

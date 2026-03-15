@@ -42,6 +42,26 @@ Graph::Graph(const std::string& filename) {
     to = to.substr(1, to.size()-3);
     insert_edge(name_map[from], name_map[to]);
   }
+
+  // initialize topological seqenuce after constructing the graph
+  std::vector<Node*> topo_dfs = _get_topo_order_dfs(); 
+
+  // assign linked fanin/fanout based on topological sequence
+  // assign pos value
+  double pos = 0.0;
+  for(int i=0; i<_nodes.size(); i++) {
+    _topo_nodes.push_back(topo_dfs[i]);
+    topo_dfs[i]->_topo_it = std::prev(_topo_nodes.end());
+    topo_dfs[i]->_pos = pos;
+    pos += 256.0;
+  }
+
+  // check _topo_it
+  for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+    Node* node = *it;
+    assert(node->_topo_it == it);
+  }
+
 }
 
 Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_size) {
@@ -116,7 +136,11 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode, bool is_limit_paral
   auto end_construct = std::chrono::steady_clock::now();
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
-  _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
+
+  // check if this is a backward edge by comparing _pos
+  if(from->_pos > to->_pos) {
+    _backward_edges.push(edge_ptr);
+  }
 
   return edge_ptr;
 }
@@ -831,23 +855,16 @@ std::vector<Node*> Graph::_get_topo_order_bfs() {
 
 void Graph::test_func() {
 
-  // std::vector<std::vector<Node*>> level_list = _get_level_list();
+  dump_graph();
 
-  // int level_id = 0;
-  // for(auto level : level_list) {
-  //   std::cout << "level " << level_id << ": ";
-  //   for(auto node_ptr : level) {
-  //     std::cout << node_ptr->_name << "(" << node_ptr->_lid << ") ";
-  //   }
-  //   std::cout << "\n";
-  // }
-
-  std::vector<Node*> topo_dfs = _get_topo_order_dfs(); 
-
-  for(auto node : topo_dfs) {
-    std::cout << node->_name << " ";
+  for(auto node_ptr : _topo_nodes) {
+    std::cout << node_ptr->_name << "(" << node_ptr->_pos << ") ";
   }
   std::cout << "\n";
+
+  if(!_process_backward_edges()) {
+    throw std::runtime_error("The topological order is not maintained correctly");
+  }
 
 }
 
@@ -1090,8 +1107,6 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
 
 void Graph::partition_cudaflow_incremental(size_t num_streams) {
 
-  std::vector<Node*> topo_dfs = _get_topo_order_dfs();
-
 }
 
 std::vector<Node*> Graph::_get_topo_order_dfs() {
@@ -1121,6 +1136,210 @@ std::vector<Node*> Graph::_get_topo_order_dfs() {
   std::reverse(topo_dfs.begin(), topo_dfs.end());
 
   return topo_dfs;
+}
+
+void Graph::generate_topo_order() {
+
+  // if _topo_nodes has been initialized, then return
+  if(!_topo_nodes.empty()) return;
+  
+  _topo_nodes.clear();
+
+  // initialize topological seqenuce after constructing the graph
+  std::vector<Node*> topo_dfs = _get_topo_order_dfs(); 
+
+  // assign linked fanin/fanout based on topological sequence
+  double pos = 0.0;
+  for(int i=0; i<_nodes.size(); i++) {
+    _topo_nodes.push_back(topo_dfs[i]);
+    topo_dfs[i]->_topo_it = std::prev(_topo_nodes.end());
+    topo_dfs[i]->_pos = pos;
+    pos += 256.0;
+  }
+
+  // check _topo_it
+  for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+    Node* node = *it;
+    assert(node->_topo_it == it);
+  }
+
+}
+
+bool Graph::_process_backward_edges() {
+
+  while(!_backward_edges.empty()) {
+    Edge* e = _backward_edges.front();
+    _backward_edges.pop();
+
+    std::cout << "backward edge: " << e->_from->_name << "(" << e->_from->_pos << ") -> "
+                                   << e->_to->_name << "(" << e->_to->_pos << ")\n";
+
+    Node* from = e->_from;
+    Node* to = e->_to;
+
+    // not backward anymore
+    if(from->_pos < to->_pos) {
+      continue;
+    }
+
+    bool has_cycle = _restricted_dfs(from, to);
+    if(has_cycle) {
+      return false;
+    }
+
+    std::list<Node*> moved;
+
+    auto stop = std::next(from->_topo_it);
+    for(auto it = to->_topo_it; it != stop; ) {
+      auto cur = it++;
+      Node* n = *cur;
+      
+      if(n->_dfs_tag == _cur_dfs_tag) {
+        // move the dfs reachable nodes from _topo_nodes to moved
+        moved.splice(moved.end(), _topo_nodes, cur);
+      }
+    }
+
+    std::cout << "moved: ";
+    for(auto n : moved) {
+      std::cout << n->_name << " ";
+    }
+    std::cout << "\n";
+
+    // save moved size and old right boundary before insertion
+    size_t moved_size = moved.size();
+    auto right_it = std::next(from->_topo_it);
+    Node* right = (right_it == _topo_nodes.end())? nullptr : *right_it;
+
+    _topo_nodes.splice(std::next(from->_topo_it), moved);
+
+    if(right) {
+      _relabel_after_from_until(from, right, moved_size);
+    }
+    else {
+      _relabel_after_left_to_end(from, moved_size);
+    }
+
+    if(!_check_topo_iterators_and_pos()) {
+      return false;
+    }
+
+  }
+
+  return true;
+
+}
+
+bool Graph::_restricted_dfs(Node* from, Node* to) {
+
+  ++_cur_dfs_tag; 
+
+  double left = to->_pos;
+  double right = from->_pos;
+
+  std::stack<Node*> st;
+  st.push(to);
+
+  while(!st.empty()) {
+
+    Node* cur = st.top();
+    st.pop();
+
+    if(cur->_dfs_tag == _cur_dfs_tag) {
+      continue; // has been visited
+    }
+
+    cur->_dfs_tag = _cur_dfs_tag;
+
+    if(cur == from) { 
+      return true; // cycle detected
+    }
+
+    for(Edge* fanout : cur->_fanouts) {
+
+      Node* nxt = fanout->_to;
+
+      if(nxt->_pos < left || nxt->_pos > right) {
+        continue;
+      }
+
+      if(nxt->_dfs_tag != _cur_dfs_tag) {
+        st.push(nxt);
+      }
+    }
+
+  }
+
+  return false;
+
+}
+
+bool Graph::_check_topo_iterators_and_pos() {
+  for (auto it = _topo_nodes.begin(); it != _topo_nodes.end(); ++it) {
+    if((*it)->_topo_it != it) {
+      return false;
+    }
+    auto next = std::next(it);
+    if(next != _topo_nodes.end()) {
+      if((*it)->_pos >= (*next)->_pos) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+void Graph::_relabel_after_from_until(Node* left, Node* right, size_t k) {
+
+  if(k == 0) {
+    return;
+  }
+
+  double left_pos = left->_pos;
+  double right_pos = right->_pos;
+
+  double step = (right_pos - left_pos) / static_cast<double>(k + 1);
+
+  if(step <= 1e-12) {
+    _relabel_full();
+    return;
+  }
+
+  double pos = left_pos + step;
+
+  auto it = std::next(left->_topo_it);
+
+  for(size_t i=0; i<k; ++i, ++it) {
+    (*it)->_pos = pos;
+    pos += step;
+  }
+
+}
+
+void Graph::_relabel_after_left_to_end(Node* left, size_t k) {
+
+  constexpr double GAP = 256.0;
+
+  double pos = left->_pos + GAP;
+
+  auto it = std::next(left->_topo_it);
+
+  for(size_t i=0; i<k; ++i, ++it) {
+    (*it)->_pos = pos;
+    pos += GAP;
+  }
+
+}
+
+void Graph::_relabel_full() {
+
+  double pos = 0.0;
+  for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+    Node* node = *it;
+    node->_pos = pos;
+    pos += 256.0;
+  }
+
 }
 
 } // end of namespace pasta

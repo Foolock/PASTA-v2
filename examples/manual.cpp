@@ -48,6 +48,8 @@ int main() {
 
   graph.dump_graph();
 
+  graph.generate_topo_order();
+
   graph.test_func();
 
 }
