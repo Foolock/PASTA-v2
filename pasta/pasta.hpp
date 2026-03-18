@@ -183,6 +183,12 @@ class Graph {
     inline size_t get_incre_construct_runtime_with_cudaflow() const {
       return _incre_construct_runtime_with_cudaflow;
     }
+    inline size_t get_process_backward_edge_time() const {
+      return _process_backward_edge_time;
+    }
+    inline size_t get_generate_topo_order_time() const {
+      return _generate_topo_order_time;
+    }
     void test_func();
 
     // check cycle
@@ -279,6 +285,9 @@ class Graph {
     tf::Executor _executor{std::thread::hardware_concurrency()};
     tf::Semaphore _semaphore{std::thread::hardware_concurrency()};  
     bool _first_run = true;
+
+    size_t _process_backward_edge_time = 0;
+    size_t _generate_topo_order_time = 0;
 
 };
 

@@ -24,14 +24,13 @@ std::vector<int> generate_random_nums(
 
 int main(int argc, char* argv[]) {
 
-  if(argc != 4) {
-    std::cerr << "usage: ./example/incre matrix_size num_incre_ops circuit_file\n";
+  if(argc != 3) {
+    std::cerr << "usage: ./example/modify_edges num_incre_ops circuit_file\n";
     std::exit(EXIT_FAILURE);
   }
 
-  int matrix_size = std::atoi(argv[1]);
-  int num_incre_ops = std::atoi(argv[2]);
-  std::string circuit_file = argv[3];
+  int num_incre_ops = std::atoi(argv[1]);
+  std::string circuit_file = argv[2];
 
   pasta::Graph graph(circuit_file); 
 
@@ -72,6 +71,8 @@ int main(int argc, char* argv[]) {
 
     graph.process_backward_edges();
 
+    graph.generate_topo_order();
+
     if(!graph.validate_modify_edge()) {
       std::cerr << "num_itr = " << num_incre_itr << "\n";
       throw std::runtime_error("The topological order is not maintained correctly");
@@ -79,6 +80,9 @@ int main(int argc, char* argv[]) {
 
     ++count;
   }
+
+  std::cout << "time spent on incrementally maintaining topo order: " << graph.get_process_backward_edge_time() << "us\n"; 
+  std::cout << "time spent on regenerating topo order: " << graph.get_generate_topo_order_time() << "us\n"; 
 
   return 0;
 }

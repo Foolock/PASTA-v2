@@ -1140,33 +1140,17 @@ std::vector<Node*> Graph::_get_topo_order_dfs() {
 
 void Graph::generate_topo_order() {
 
-  // if _topo_nodes has been initialized, then return
-  if(!_topo_nodes.empty()) return;
-  
-  _topo_nodes.clear();
-
-  // initialize topological seqenuce after constructing the graph
+  auto start = std::chrono::steady_clock::now();
   std::vector<Node*> topo_dfs = _get_topo_order_dfs(); 
+  auto end = std::chrono::steady_clock::now();
 
-  // assign linked fanin/fanout based on topological sequence
-  double pos = 0.0;
-  for(int i=0; i<_nodes.size(); i++) {
-    _topo_nodes.push_back(topo_dfs[i]);
-    topo_dfs[i]->_topo_it = std::prev(_topo_nodes.end());
-    topo_dfs[i]->_pos = pos;
-    pos += 256.0;
-  }
-
-  // check _topo_it
-  for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
-    Node* node = *it;
-    assert(node->_topo_it == it);
-  }
+  _generate_topo_order_time += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
 
 }
 
 bool Graph::process_backward_edges() {
 
+  auto start = std::chrono::steady_clock::now();
   while(!_backward_edges.empty()) {
     Edge* e = _backward_edges.front();
     _backward_edges.pop();
@@ -1226,6 +1210,9 @@ bool Graph::process_backward_edges() {
     }
 
   }
+  auto end = std::chrono::steady_clock::now();
+
+  _process_backward_edge_time += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
 
   // if(!is_topo_nodes_valid()) {
   //   return false;
