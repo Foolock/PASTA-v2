@@ -81,7 +81,7 @@ class Node {
     std::list<Node*>::iterator _topo_it;
     
     // indicate its position in the topological sequence
-    double _pos = 0.0;
+    uint64_t _pos = 0;
 
     uint64_t _dfs_tag = 0;
 
@@ -189,6 +189,9 @@ class Graph {
     inline size_t get_generate_topo_order_time() const {
       return _generate_topo_order_time;
     }
+    inline size_t get_num_backward_edges() const {
+      return _num_backward_edges;
+    }
     void test_func();
 
     // check cycle
@@ -288,6 +291,7 @@ class Graph {
 
     size_t _process_backward_edge_time = 0;
     size_t _generate_topo_order_time = 0;
+    size_t _num_backward_edges = 0;
 
 };
 

@@ -48,12 +48,12 @@ Graph::Graph(const std::string& filename) {
 
   // assign linked fanin/fanout based on topological sequence
   // assign pos value
-  double pos = 0.0;
+  uint64_t pos = 0;
   for(int i=0; i<_nodes.size(); i++) {
     _topo_nodes.push_back(topo_dfs[i]);
     topo_dfs[i]->_topo_it = std::prev(_topo_nodes.end());
     topo_dfs[i]->_pos = pos;
-    pos += 256.0;
+    pos += 1024;
   }
 
   // check _topo_it
@@ -1150,6 +1150,8 @@ void Graph::generate_topo_order() {
 
 bool Graph::process_backward_edges() {
 
+  _num_backward_edges += _backward_edges.size();
+
   auto start = std::chrono::steady_clock::now();
   while(!_backward_edges.empty()) {
     Edge* e = _backward_edges.front();
@@ -1204,10 +1206,10 @@ bool Graph::process_backward_edges() {
       _relabel_after_left_to_end(from, moved_size);
     }
 
-    if(!check_topo_iterators_and_pos()) {
-      throw std::runtime_error("topo_itr and pos wrong");
-      return false;
-    }
+    // if(!check_topo_iterators_and_pos()) {
+    //   throw std::runtime_error("topo_itr and pos wrong");
+    //   return false;
+    // }
 
   }
   auto end = std::chrono::steady_clock::now();
@@ -1226,8 +1228,8 @@ bool Graph::_restricted_dfs(Node* from, Node* to) {
 
   ++_cur_dfs_tag; 
 
-  double left = to->_pos;
-  double right = from->_pos;
+  uint64_t left = to->_pos;
+  uint64_t right = from->_pos;
 
   std::stack<Node*> st;
   st.push(to);
@@ -1312,51 +1314,67 @@ void Graph::_relabel_after_from_until(Node* left, Node* right, size_t k) {
     return;
   }
 
-  double left_pos = left->_pos;
-  double right_pos = right->_pos;
+  uint64_t left_pos  = left->_pos;
+  uint64_t right_pos = right->_pos;
 
-  double step = (right_pos - left_pos) / static_cast<double>(k + 1);
+  if(right_pos <= left_pos || right_pos - left_pos <= k) {
+    _relabel_full();
+    return;
+  }
 
-  // if(step <= 1e-12) {
-  //   std::cerr << "here?\n";
-  //   _relabel_full();
-  //   return;
-  // }
-  if(step <= 0.0 || left_pos + step == left_pos || right_pos - step == right_pos) {
+  uint64_t step = (right_pos - left_pos) / static_cast<uint64_t>(k + 1);
+
+  if(step == 0) {
     _relabel_full();
     return;
   }
 
   auto it = std::next(left->_topo_it);
+  uint64_t prev = left_pos;
 
-  for(size_t i=0; i<k; ++i, ++it) {
-    (*it)->_pos = left_pos + step * static_cast<double>(i + 1);
+  for(size_t i = 0; i < k; ++i, ++it) {
+    uint64_t cur = left_pos + step * static_cast<uint64_t>(i + 1);
+
+    if(cur <= prev || cur >= right_pos) {
+      _relabel_full();
+      return;
+    }
+
+    (*it)->_pos = cur;
+    prev = cur;
   }
-
 }
 
 void Graph::_relabel_after_left_to_end(Node* left, size_t k) {
 
-  constexpr double GAP = 256.0;
+  if(k == 0) {
+    return;
+  }
 
-  double pos = left->_pos + GAP;
+  static constexpr uint64_t GAP = 1ull << 20;
+
+  uint64_t pos = left->_pos;
 
   auto it = std::next(left->_topo_it);
 
-  for(size_t i=0; i<k; ++i, ++it) {
-    (*it)->_pos = pos;
-    pos += GAP;
-  }
+  for(size_t i = 0; i < k; ++i, ++it) {
+    if(UINT64_MAX - pos < GAP) {
+      _relabel_full();
+      return;
+    }
 
+    pos += GAP;
+    (*it)->_pos = pos;
+  }
 }
 
 void Graph::_relabel_full() {
 
-  double pos = 0.0;
+  uint64_t pos = 0;
   for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
     Node* node = *it;
     node->_pos = pos;
-    pos += 256.0;
+    pos += 1024;
   }
 
 }

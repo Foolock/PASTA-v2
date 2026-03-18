@@ -81,6 +81,7 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
+  std::cout << "average number of backward edges per iteration: " << static_cast<double>(graph.get_num_backward_edges()) / num_incre_itr << "\n";
   std::cout << "time spent on incrementally maintaining topo order: " << graph.get_process_backward_edge_time() << "us\n"; 
   std::cout << "time spent on regenerating topo order: " << graph.get_generate_topo_order_time() << "us\n"; 
 
