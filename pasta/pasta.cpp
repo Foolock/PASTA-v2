@@ -1379,6 +1379,56 @@ void Graph::_relabel_full() {
 
 }
 
+void Graph::_construct_taskflow_linear_chain(size_t matrix_size) {
+
+  // emplace task
+  for(auto& node : _nodes) {
+    node._task = _taskflow.emplace([this, matrix_size, &node]() {
+      // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
+      size_t N = matrix_size;
+      size_t M = matrix_size;
+      size_t K = matrix_size;
+      std::vector<int> A(N*K, 1);
+      std::vector<int> B(K*M, 2);
+      std::vector<int> C(N*M);
+      for(size_t n=0; n<N; n++) {
+        for(size_t m=0; m<M; m++) {
+          int temp = 0;
+          for(size_t k=0; k<K; k++) {
+            temp += A[n*K + k] * B[k*M + m];
+          }
+          C[n*M + m] = temp;
+        }
+      }
+    });
+  }
+
+  // connect dependencies as a linear chain based on _topo_nodes
+  for(auto it = _topo_nodes.begin(); it != std::prev(_topo_nodes.end()); it++) {
+    Node* cur = *it;
+    Node* next = *(std::next(it)); 
+    // record linked list info in my own node object
+    cur->_linked_to = next;
+    next->_linked_from = cur;
+    // record linked list info in taskflow object
+    cur->_task.precede(next->_task);
+  }
+
+}
+
+void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {  
+
+  // Step 1: construct taskflow graph as a linear chain based on _topo_nodes 
+  // only done once in the first complete run
+  if(_first_run) {
+    _construct_taskflow_linear_chain(matrix_size);
+  }
+  _first_run = false;
+
+  _executor.run(_taskflow).wait();
+
+}
+
 } // end of namespace pasta
 
 

@@ -85,6 +85,9 @@ class Node {
 
     uint64_t _dfs_tag = 0;
 
+    Node* _linked_to = nullptr;
+    Node* _linked_from = nullptr;
+
 };
 
 class Edge {
@@ -221,6 +224,9 @@ class Graph {
     void run_graph_after_partition(size_t matrix_size);
     void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
+    // cur_parallelism is the parallelism limit for current iteration
+    // max_parallelism is the maximum potential parallelism
+    void run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
 
     bool process_backward_edges();
 
@@ -274,6 +280,9 @@ class Graph {
 
     // perform a full relabel
     void _relabel_full();
+
+    // construct taskflow graph as a linear chain
+    void _construct_taskflow_linear_chain(size_t matrix_size); 
 
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;
