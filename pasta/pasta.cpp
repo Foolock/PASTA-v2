@@ -62,6 +62,16 @@ Graph::Graph(const std::string& filename) {
     assert(node->_topo_it == it);
   }
 
+  for(auto it = _topo_nodes.begin(); it != std::prev(_topo_nodes.end()); ++it) {
+    Node* u = *it;
+    Node* v = *std::next(it);
+
+    u->_linked_to = v;
+    v->_linked_from = u;
+
+    u->_linked_to_is_actual = _has_original_edge(u, v);
+  }
+
 }
 
 Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_size) {
@@ -1138,6 +1148,15 @@ std::vector<Node*> Graph::_get_topo_order_dfs() {
   return topo_dfs;
 }
 
+bool Graph::_has_original_edge(Node* from, Node* to) const {
+  for(auto e : from->_fanouts) {
+    if(e->_to == to) {
+      return true;
+    }
+  }
+  return false;
+} 
+
 void Graph::generate_topo_order() {
 
   auto start = std::chrono::steady_clock::now();
@@ -1403,7 +1422,14 @@ void Graph::_construct_taskflow_linear_chain(size_t matrix_size) {
     }).name(node._name);
   }
 
-  // connect dependencies as a linear chain based on _topo_nodes
+  // connect original dependencies
+  for(auto& node : _nodes) {
+    for(auto fanout : node._fanouts) {
+      node._task.precede(fanout->_to->_task);
+    }
+  }
+
+  // connect extra dependencies as a linear chain based on _topo_nodes
   for(auto it = _topo_nodes.begin(); it != std::prev(_topo_nodes.end()); it++) {
     Node* cur = *it;
     Node* next = *(std::next(it)); 
@@ -1416,55 +1442,54 @@ void Graph::_construct_taskflow_linear_chain(size_t matrix_size) {
 
 }
 
-void Graph::_find_breakable_nodes(size_t max_parallelism) {
+void Graph::_build_breakable_nodes(size_t max_parallelism) {
 
   _breakable_nodes.clear();
 
-  size_t N = _topo_nodes.size();
-  if(N <= 1 || max_parallelism <= 1) {
+  if(max_parallelism <= 1) {
     return;
   }
 
-  // Precompute positions of break points (last node of each segment)
-  std::vector<size_t> break_idx;
-  break_idx.reserve(max_parallelism - 1);
+  // collect all legal break points first
+  std::vector<Node*> legal_breaks;
+  legal_breaks.reserve(_topo_nodes.size());
 
-  for(size_t i = 1; i < max_parallelism; ++i) {
-    size_t idx = (i * N) / max_parallelism;
-    if(idx == 0 || idx >= N) {
-      continue;
+  for(auto it = _topo_nodes.begin(); it != std::prev(_topo_nodes.end()); ++it) {
+    Node* u = *it;
+    if(u->_linked_to != nullptr && !u->_linked_to_is_actual) {
+      legal_breaks.push_back(u);   // break after u
     }
-    break_idx.push_back(idx - 1);  // last node of left segment
   }
 
-  // Traverse topo list once and collect nodes
-  _breakable_nodes.reserve(break_idx.size());
+  if(legal_breaks.empty()) {
+    return;
+  }
 
-  auto it = _topo_nodes.begin();
-  size_t pos = 0;
-  size_t k = 0;
+  size_t need = std::min(max_parallelism - 1, legal_breaks.size());
+  _breakable_nodes.reserve(need);
 
-  for(; it != _topo_nodes.end() && k < break_idx.size(); ++it, ++pos) {
-    if(pos == break_idx[k]) {
-      _breakable_nodes.push_back(*it);
-      ++k;
-    }
-  } 
-
+  // evenly choose from legal break points
+  for(size_t i = 1; i <= need; ++i) {
+    size_t idx = (i * legal_breaks.size()) / (need + 1);
+    _breakable_nodes.push_back(legal_breaks[idx]);
+  }
 }
 
-std::vector<Node*> Graph::_select_breakable_nodes(size_t cur_parallelism, size_t max_parallelism) const {
+std::vector<Node*> Graph::_select_breakable_nodes(size_t cur_parallelism) const {
 
   std::vector<Node*> selected;
 
-  if(cur_parallelism <= 1 || _breakable_nodes.empty()) {
+  size_t achievable = 1 + _breakable_nodes.size();
+  cur_parallelism = std::min(cur_parallelism, achievable);
+
+  if(cur_parallelism <= 1) {
     return selected;
   }
 
   selected.reserve(cur_parallelism - 1);
 
   for(size_t i = 1; i < cur_parallelism; ++i) {
-    size_t j = (i * max_parallelism) / cur_parallelism - 1;
+    size_t j = (i * _breakable_nodes.size()) / cur_parallelism;
     selected.push_back(_breakable_nodes[j]);
   }
 
@@ -1478,13 +1503,22 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   //   Get the break point vectors based on max_parallelism
   if(_first_run) {
     _construct_taskflow_linear_chain(matrix_size);
-    _find_breakable_nodes(max_parallelism);
+    _build_breakable_nodes(max_parallelism);
   }
   _first_run = false;
 
   // Step 2:
   //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
-  std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism, max_parallelism);
+  std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism);
+
+  _taskflow.dump(std::cout);
+
+  // Step 3:
+  //   Break taskflow linear chain based on selected_breakable_nodes
+  for(auto node_ptr : selected_breakable_nodes) {
+    Node* linked_to = node_ptr->_linked_to;
+    node_ptr->_task.remove_successors(linked_to->_task);
+  }
 
   _executor.run(_taskflow).wait();
 

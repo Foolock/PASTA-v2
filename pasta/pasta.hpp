@@ -86,6 +86,8 @@ class Node {
     uint64_t _dfs_tag = 0;
 
     Node* _linked_to = nullptr;
+    // Indicate the edge between this node and _linked_to exists in the original graph
+    bool _linked_to_is_actual = false;
     Node* _linked_from = nullptr;
 
 };
@@ -265,6 +267,8 @@ class Graph {
     // get reversed topological order of current graph using DFS 
     void _get_topo_reverse_order_dfs(std::vector<Node*>& topo); 
 
+    bool _has_original_edge(Node* from, Node* to) const; 
+
     template <typename T>
     void _topo_dfs(std::vector<T*>& topo_order, T* node);
 
@@ -288,11 +292,11 @@ class Graph {
     // construct taskflow graph as a linear chain
     void _construct_taskflow_linear_chain(size_t matrix_size); 
 
-    // find breakable points
-    void _find_breakable_nodes(size_t max_parallelism);
+    // build breakable points
+    void _build_breakable_nodes(size_t max_parallelism);
 
     // select breakable points
-    std::vector<Node*> _select_breakable_nodes(size_t cur_parallelism, size_t max_parallelism) const;
+    std::vector<Node*> _select_breakable_nodes(size_t cur_parallelism) const;
 
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;
