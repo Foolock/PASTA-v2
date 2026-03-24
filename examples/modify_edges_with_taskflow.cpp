@@ -51,7 +51,7 @@ int main(int argc, char* argv[]) {
 
   pasta::RunMode mode = pasta::RunMode::Partition;
 
-  graph.run_graph_incre_partition(matrix_size, max_parallelism, max_parallelism);
+  graph.run_graph_incre_partition(matrix_size, 4, max_parallelism);
 
   return 0;
 }

@@ -248,6 +248,10 @@ class Graph {
 
     std::list<Node*> _topo_nodes;
     std::queue<Edge*> _backward_edges;
+    // _breakable_nodes stores the breakable points in the linear chain.
+    // _breakable_nodes[i] is the last node of one segments.
+    // _breakable_nodes.size() = maximum potential parallelism - 1
+    std::vector<Node*> _breakable_nodes;
 
     // get level list of current graph 
     std::vector<std::vector<Node*>> _get_level_list();
@@ -283,6 +287,12 @@ class Graph {
 
     // construct taskflow graph as a linear chain
     void _construct_taskflow_linear_chain(size_t matrix_size); 
+
+    // find breakable points
+    void _find_breakable_nodes(size_t max_parallelism);
+
+    // select breakable points
+    std::vector<Node*> _select_breakable_nodes(size_t cur_parallelism, size_t max_parallelism) const;
 
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;
