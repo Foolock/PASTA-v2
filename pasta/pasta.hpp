@@ -85,10 +85,8 @@ class Node {
 
     uint64_t _dfs_tag = 0;
 
-    Node* _linked_to = nullptr;
-    // Indicate the edge between this node and _linked_to exists in the original graph
+    // Indicate the edge between this node and its next node in _topo_nodes exists in the original graph
     bool _linked_to_is_actual = false;
-    Node* _linked_from = nullptr;
 
 };
 
@@ -230,7 +228,8 @@ class Graph {
     // max_parallelism is the maximum potential parallelism
     void run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
 
-    bool process_backward_edges();
+    bool process_backward_edges(); // process backward edges based on std::list
+    bool process_backward_edges_taskflow(); // process backward edges based on node class
 
     void generate_topo_order();
 
@@ -239,6 +238,8 @@ class Graph {
     bool validate_modify_edge() const;
 
   private:
+
+    bool _initialized = false;
 
     size_t _partition_size = 0;
     int _max_cluster_id = -1; // record the largest cluster id
@@ -297,6 +298,9 @@ class Graph {
 
     // select breakable points
     std::vector<Node*> _select_breakable_nodes(size_t cur_parallelism) const;
+
+    // help function to update taskflow sequence
+    void _update_taskflow_sequence(Node* left_update_bound, Node* right_update_bound);
 
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;

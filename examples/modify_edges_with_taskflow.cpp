@@ -49,7 +49,7 @@ int main(int argc, char* argv[]) {
 
   std::mt19937 gen(42);
 
-  pasta::RunMode mode = pasta::RunMode::Partition;
+  pasta::RunMode mode = pasta::RunMode::IncrementalPartition;
 
   graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
 

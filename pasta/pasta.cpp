@@ -62,15 +62,14 @@ Graph::Graph(const std::string& filename) {
     assert(node->_topo_it == it);
   }
 
+  // identify actual edge vs extra edge
   for(auto it = _topo_nodes.begin(); it != std::prev(_topo_nodes.end()); ++it) {
     Node* u = *it;
     Node* v = *std::next(it);
-
-    u->_linked_to = v;
-    v->_linked_from = u;
-
     u->_linked_to_is_actual = _has_original_edge(u, v);
   }
+
+  _initialized = true;
 
 }
 
@@ -117,6 +116,14 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
 
 Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode, bool is_limit_parallelism) {
 
+  if(_initialized) {
+    auto it = from->_topo_it;
+    Node* next = *(std::next(it));
+    if(next == to) {
+      from->_linked_to_is_actual = true;
+    }
+  }
+
   // Edge edge;
   Edge* edge_ptr = &_edges.emplace_back();
 
@@ -140,7 +147,7 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode, bool is_limit_paral
 
   auto start_construct = std::chrono::steady_clock::now();
   // if run taskflow with semaphore
-  if(mode == RunMode::Semaphore) {
+  if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
     from->_task.precede(to->_task);
   }
   auto end_construct = std::chrono::steady_clock::now();
@@ -186,6 +193,12 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
   Node* from = edge->_from;
   Node* to = edge->_to;
 
+  auto it = from->_topo_it;
+  Node* next = *(std::next(it));
+  if(next == to) {
+    from->_linked_to_is_actual = false;
+  }
+
   // remove edge from _fanouts of from node
   // also remove edge from _fanout_satellites of from node
   // this edge should be in the same index as the edge in _fanouts
@@ -205,7 +218,7 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
 
   auto start_construct = std::chrono::steady_clock::now();
   // if run taskflow with semaphore
-  if(mode == RunMode::Semaphore) {
+  if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
     from->_task.remove_successors(to->_task);
     to->_task.remove_predecessors(from->_task);
   }
@@ -1243,6 +1256,74 @@ bool Graph::process_backward_edges() {
 
 }
 
+bool Graph::process_backward_edges_taskflow() { 
+
+  _num_backward_edges += _backward_edges.size();
+
+  auto start = std::chrono::steady_clock::now();
+  while(!_backward_edges.empty()) {
+    Edge* e = _backward_edges.front();
+    _backward_edges.pop();
+
+    Node* from = e->_from;
+    Node* to = e->_to;
+
+    // not backward anymore
+    if(from->_pos < to->_pos) {
+      continue;
+    }
+
+    bool has_cycle = _restricted_dfs(from, to);
+    if(has_cycle) {
+      return false;
+    }
+
+    // Before move around topo_nodes,
+    // record left_update_bound and right_update_bound for _taskflow sequence
+    // only consider update _task and _linked_to_is_actual for nodes in [left_update_bound, right_update_bound] 
+    Node* left_update_bound = *(std::prev(to->_topo_it));
+    Node* right_update_bound = *(std::next(from->_topo_it));
+
+    std::list<Node*> moved;
+
+    auto stop = std::next(from->_topo_it);
+    for(auto it = to->_topo_it; it != stop; ) {
+      auto cur = it++;
+      Node* n = *cur;
+      
+      if(n->_dfs_tag == _cur_dfs_tag) {
+        // move the dfs reachable nodes from _topo_nodes to moved
+        moved.splice(moved.end(), _topo_nodes, cur);
+      }
+    }
+
+    // save moved size and old right boundary before insertion
+    size_t moved_size = moved.size();
+    auto right_it = std::next(from->_topo_it);
+    Node* right = (right_it == _topo_nodes.end())? nullptr : *right_it;
+
+    _topo_nodes.splice(std::next(from->_topo_it), moved);
+
+    if(right) {
+      _relabel_after_from_until(from, right, moved_size);
+    }
+    else {
+      _relabel_after_left_to_end(from, moved_size);
+    }
+
+  }
+  auto end = std::chrono::steady_clock::now();
+
+  _process_backward_edge_time += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+
+  return true;
+
+}
+
+void Graph::_update_taskflow_sequence(Node* left_update_bound, Node* right_update_bound) {
+
+}
+
 bool Graph::_restricted_dfs(Node* from, Node* to) {
 
   ++_cur_dfs_tag; 
@@ -1433,10 +1514,6 @@ void Graph::_construct_taskflow_linear_chain(size_t matrix_size) {
   for(auto it = _topo_nodes.begin(); it != std::prev(_topo_nodes.end()); it++) {
     Node* cur = *it;
     Node* next = *(std::next(it)); 
-    // record linked list info in my own node object
-    cur->_linked_to = next;
-    next->_linked_from = cur;
-    // record linked list info in taskflow object
     cur->_task.precede(next->_task);
   }
 
@@ -1456,7 +1533,7 @@ void Graph::_build_breakable_nodes(size_t max_parallelism) {
 
   for(auto it = _topo_nodes.begin(); it != std::prev(_topo_nodes.end()); ++it) {
     Node* u = *it;
-    if(u->_linked_to != nullptr && !u->_linked_to_is_actual) {
+    if(!u->_linked_to_is_actual) {
       legal_breaks.push_back(u);   // break after u
     }
   }
@@ -1507,17 +1584,23 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   }
   _first_run = false;
 
-  // Step 2:
+  // Step 2: 
+  //   Process backward edges
+  //   Check if the updated topological sequence will invalid _breakable_nodes, if so, rebuild _breakable_nodes
+
+
+  // Step 3:
   //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
   std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism);
 
   _taskflow.dump(std::cout);
 
-  // Step 3:
+  // Step 4:
   //   Break taskflow linear chain based on selected_breakable_nodes
   for(auto node_ptr : selected_breakable_nodes) {
-    Node* linked_to = node_ptr->_linked_to;
-    node_ptr->_task.remove_successors(linked_to->_task);
+    auto next_it = std::next(node_ptr->_topo_it);
+    Node* next = *next_it;
+    node_ptr->_task.remove_successors(next->_task);
   }
 
   _executor.run(_taskflow).wait();
