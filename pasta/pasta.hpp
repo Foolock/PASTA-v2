@@ -86,6 +86,7 @@ class Node {
     uint64_t _dfs_tag = 0;
 
     // Indicate the edge between this node and its next node in _topo_nodes exists in the original graph
+    Node* _linked_to = nullptr;
     bool _linked_to_is_actual = false;
 
 };

@@ -66,6 +66,7 @@ Graph::Graph(const std::string& filename) {
   for(auto it = _topo_nodes.begin(); it != std::prev(_topo_nodes.end()); ++it) {
     Node* u = *it;
     Node* v = *std::next(it);
+    u->_linked_to = v;
     u->_linked_to_is_actual = _has_original_edge(u, v);
   }
 
@@ -1280,9 +1281,9 @@ bool Graph::process_backward_edges_taskflow() {
 
     // Before move around topo_nodes,
     // record left_update_bound and right_update_bound for _taskflow sequence
-    // only consider update _task and _linked_to_is_actual for nodes in [left_update_bound, right_update_bound] 
-    Node* left_update_bound = *(std::prev(to->_topo_it));
-    Node* right_update_bound = *(std::next(from->_topo_it));
+    // only consider update _task and _linked_to_is_actual for nodes in [left_update_bound, right_update_bound) 
+    Node* left_update_bound = (*(std::prev(to->_topo_it)) != nullptr)? *(std::prev(to->_topo_it)) : *(to->_topo_it);
+    Node* right_update_bound = (*(std::next(from->_topo_it)) != nullptr)? *(std::next(from->_topo_it)) : *(from->_topo_it);
 
     std::list<Node*> moved;
 
@@ -1321,6 +1322,21 @@ bool Graph::process_backward_edges_taskflow() {
 }
 
 void Graph::_update_taskflow_sequence(Node* left_update_bound, Node* right_update_bound) {
+
+  // Traverse [left_update_bound, right_update_bound) in _topo_nodes.
+  // For each node in [left_update_bound, right_update_bound],
+  // check if cur->_linked_to == next,
+  // if so, no need to update _task and _linked_to_is_actual
+  // if not, first update _task:
+  //                if _linked_to_is_actual = true, skip
+  //                if _linked_to_is_actual = false, cur->_task.remove_successors(cur->_linked_to->_task)
+  //                cur->_linked_to = next
+  //                cur->_task.precede(linked_to->_task)
+  //                cur->_linked_to_is_actual = _has_original_edge(cur, cur->_linked_to)  
+  for(auto it = left_update_bound->_topo_it; it != right_update_bound->_topo_it; it++) {
+    Node* cur = *it;
+    Node* next = *(std::next(it)); // I have made sure right_update_bound as non nullptr.
+  }
 
 }
 
