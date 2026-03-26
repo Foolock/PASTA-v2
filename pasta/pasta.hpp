@@ -303,6 +303,9 @@ class Graph {
     // help function to update taskflow sequence
     void _update_taskflow_sequence(Node* left_update_bound, Node* right_update_bound);
 
+    // helper to check if we need to rebuild breakable points
+    bool _need_to_rebuild_breakable_nodes() const;
+
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;
     size_t _incre_runtime_with_semaphore_graph_construct = 0;

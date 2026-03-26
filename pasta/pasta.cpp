@@ -1261,7 +1261,6 @@ bool Graph::process_backward_edges_taskflow() {
 
   _num_backward_edges += _backward_edges.size();
 
-  auto start = std::chrono::steady_clock::now();
   while(!_backward_edges.empty()) {
     Edge* e = _backward_edges.front();
     _backward_edges.pop();
@@ -1312,10 +1311,10 @@ bool Graph::process_backward_edges_taskflow() {
       _relabel_after_left_to_end(from, moved_size);
     }
 
-  }
-  auto end = std::chrono::steady_clock::now();
+    // process taskflow sequence based on updated _topo_nodes
+    _update_taskflow_sequence(left_update_bound, right_update_bound);
 
-  _process_backward_edge_time += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  }
 
   return true;
 
@@ -1336,6 +1335,14 @@ void Graph::_update_taskflow_sequence(Node* left_update_bound, Node* right_updat
   for(auto it = left_update_bound->_topo_it; it != right_update_bound->_topo_it; it++) {
     Node* cur = *it;
     Node* next = *(std::next(it)); // I have made sure right_update_bound as non nullptr.
+    if(cur->_linked_to != next) {
+      if(!cur->_linked_to_is_actual) {
+        cur->_task.remove_successors(cur->_linked_to->_task);
+      }
+      cur->_linked_to = next;
+      cur->_task.precede(cur->_linked_to->_task);
+      cur->_linked_to_is_actual = _has_original_edge(cur, cur->_linked_to);
+    }
   }
 
 }
@@ -1589,6 +1596,31 @@ std::vector<Node*> Graph::_select_breakable_nodes(size_t cur_parallelism) const 
   return selected;
 }
 
+bool Graph::_need_to_rebuild_breakable_nodes() const {
+
+  // Check each node in _breakable_nodes
+  // 1. If a node is the first or last node in _topo_nodes, rebuild. 
+  // 2. Adjacent nodes in _breakable_nodes must have at least 10 space in _pos,
+  //    i.e. next->_pos >= cur->_pos + 10; otherwise rebuild.
+  for(auto node_ptr : _breakable_nodes) {
+    if(node_ptr->_topo_it == _topo_nodes.begin() || node_ptr->_topo_it == std::prev(_topo_nodes.end())) {
+      return true;
+    }
+  }
+
+  if(_breakable_nodes.size() > 1) {
+    for(size_t i = 0; i < _breakable_nodes.size() - 1; i++) {
+      Node* cur = _breakable_nodes[i];
+      Node* next = _breakable_nodes[i + 1]; 
+      if(cur->_pos + 10 > next->_pos) { // use addition to be safe for uint64
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {  
 
   // Step 1 (only done once in the first complete run): 
@@ -1603,7 +1635,10 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   // Step 2: 
   //   Process backward edges
   //   Check if the updated topological sequence will invalid _breakable_nodes, if so, rebuild _breakable_nodes
-
+  process_backward_edges_taskflow();
+  if(_need_to_rebuild_breakable_nodes()) {
+    _build_breakable_nodes(max_parallelism);
+  }
 
   // Step 3:
   //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism

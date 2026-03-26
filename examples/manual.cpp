@@ -2,7 +2,7 @@
 
 int main() {
 
-  pasta::Graph graph;
+  pasta::Graph graph("../benchmarks/manual.txt");
 
   // pasta::Node* A = graph.insert_node("A");
   // pasta::Node* B = graph.insert_node("B");
@@ -21,36 +21,51 @@ int main() {
   // graph.remove_edge(AC);
   // graph.dump_graph();
 
-  pasta::Node* n0 = graph.insert_node("0");
-  pasta::Node* n1 = graph.insert_node("1");
-  pasta::Node* n2 = graph.insert_node("2");
-  pasta::Node* n3 = graph.insert_node("3");
-  pasta::Node* n4 = graph.insert_node("4");
-  pasta::Node* n5 = graph.insert_node("5");
-  pasta::Node* n6 = graph.insert_node("6");
-  pasta::Node* n7 = graph.insert_node("7");
-  pasta::Node* n8 = graph.insert_node("8");
-  pasta::Node* n9 = graph.insert_node("9");
-  pasta::Node* n10 = graph.insert_node("10");
+  // pasta::Node* n0 = graph.insert_node("0");
+  // pasta::Node* n1 = graph.insert_node("1");
+  // pasta::Node* n2 = graph.insert_node("2");
+  // pasta::Node* n3 = graph.insert_node("3");
+  // pasta::Node* n4 = graph.insert_node("4");
+  // pasta::Node* n5 = graph.insert_node("5");
+  // pasta::Node* n6 = graph.insert_node("6");
+  // pasta::Node* n7 = graph.insert_node("7");
+  // pasta::Node* n8 = graph.insert_node("8");
+  // pasta::Node* n9 = graph.insert_node("9");
+  // pasta::Node* n10 = graph.insert_node("10");
 
-  graph.insert_edge(n0, n1);
-  graph.insert_edge(n1, n2);
-  graph.insert_edge(n2, n3);
-  graph.insert_edge(n3, n10);
-  graph.insert_edge(n0, n4);
-  graph.insert_edge(n4, n5);
-  graph.insert_edge(n5, n6);
-  graph.insert_edge(n6, n10);
-  graph.insert_edge(n0, n7);
-  graph.insert_edge(n7, n8);
-  graph.insert_edge(n8, n9);
-  graph.insert_edge(n9, n10);
+  // graph.insert_edge(n0, n1);
+  // graph.insert_edge(n1, n2);
+  // graph.insert_edge(n2, n3);
+  // graph.insert_edge(n3, n10);
+  // graph.insert_edge(n0, n4);
+  // graph.insert_edge(n4, n5);
+  // graph.insert_edge(n5, n6);
+  // graph.insert_edge(n6, n10);
+  // graph.insert_edge(n0, n7);
+  // graph.insert_edge(n7, n8);
+  // graph.insert_edge(n8, n9);
+  // graph.insert_edge(n9, n10);
 
-  graph.dump_graph();
+  int matrix_size = 8;
+  int num_incre_ops = 10;
+  int max_parallelism = 8;
 
-  graph.generate_topo_order();
+  std::cout << "num_nodes: " << graph.num_nodes() << "\n";
+  std::cout << "num_edges: " << graph.num_edges() << "\n";
 
-  graph.test_func();
+  size_t N = num_incre_ops;
+
+  size_t num_incre_itr = 100; // we will have totally 1k incremental iterations
+
+  size_t count = 0;
+
+  std::mt19937 gen(42);
+
+  pasta::RunMode mode = pasta::RunMode::IncrementalPartition;
+
+  graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
+
+
 
 }
 
