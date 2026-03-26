@@ -53,7 +53,7 @@ int main() {
   std::cout << "num_nodes: " << graph.num_nodes() << "\n";
   std::cout << "num_edges: " << graph.num_edges() << "\n";
 
-  size_t N = num_incre_ops;
+  graph.print_topo_order();
 
   size_t num_incre_itr = 100; // we will have totally 1k incremental iterations
 
@@ -65,6 +65,11 @@ int main() {
 
   graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
 
+  graph.add_backward_edge(); 
+
+  graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
+
+  graph.print_topo_order();
 
 
 }

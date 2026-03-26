@@ -237,6 +237,8 @@ class Graph {
     bool check_topo_iterators_and_pos() const;
     bool is_topo_nodes_valid() const;
     bool validate_modify_edge() const;
+    void print_topo_order() const;
+    void add_backward_edge();
 
   private:
 

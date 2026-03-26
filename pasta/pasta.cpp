@@ -118,6 +118,7 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
 Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode, bool is_limit_parallelism) {
 
   if(_initialized) {
+    // cannot do this, the _topo_nodes has not been updated yet.
     auto it = from->_topo_it;
     Node* next = *(std::next(it));
     if(next == to) {
@@ -197,6 +198,7 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
   auto it = from->_topo_it;
   Node* next = *(std::next(it));
   if(next == to) {
+    // this is ok cuz it does not really matter if _topo_nodes is updated or not.
     from->_linked_to_is_actual = false;
   }
 
@@ -823,22 +825,22 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
 
 void Graph::dump_graph() {
 
-  tf::Taskflow taskflow;
-  tf::Executor executor;
+  // tf::Taskflow taskflow;
+  // tf::Executor executor;
 
-  auto start = std::chrono::steady_clock::now();
-  for(auto& node : _nodes) {
-    node._task = taskflow.emplace([this]() {
-    }).name(node._name);
-  }
+  // auto start = std::chrono::steady_clock::now();
+  // for(auto& node : _nodes) {
+  //   node._task = taskflow.emplace([this]() {
+  //   }).name(node._name);
+  // }
 
-  for(auto& node : _nodes) {
-    for(auto fanout : node._fanouts) {
-      node._task.precede(fanout->_to->_task);
-    }
-  }
+  // for(auto& node : _nodes) {
+  //   for(auto fanout : node._fanouts) {
+  //     node._task.precede(fanout->_to->_task);
+  //   }
+  // }
 
-  taskflow.dump(std::cout);
+  // taskflow.dump(std::cout);
 }
 
 std::vector<Node*> Graph::_get_topo_order_bfs() {
@@ -1336,7 +1338,9 @@ void Graph::_update_taskflow_sequence(Node* left_update_bound, Node* right_updat
     Node* cur = *it;
     Node* next = *(std::next(it)); // I have made sure right_update_bound as non nullptr.
     if(cur->_linked_to != next) {
-      if(!cur->_linked_to_is_actual) {
+      // if(!cur->_linked_to_is_actual) {
+      if(!_has_original_edge(cur, cur->_linked_to)) { // have to do the recheck 
+                                                      // cuz user may add edge after you have build up the _topo_nodes
         cur->_task.remove_successors(cur->_linked_to->_task);
       }
       cur->_linked_to = next;
@@ -1600,10 +1604,17 @@ bool Graph::_need_to_rebuild_breakable_nodes() const {
 
   // Check each node in _breakable_nodes
   // 1. If a node is the first or last node in _topo_nodes, rebuild. 
-  // 2. Adjacent nodes in _breakable_nodes must have at least 10 space in _pos,
+  // 2. If a node->_linked_to_is_actual = true, rebuild
+  // 3. Adjacent nodes in _breakable_nodes must have at least 10 space in _pos,
   //    i.e. next->_pos >= cur->_pos + 10; otherwise rebuild.
   for(auto node_ptr : _breakable_nodes) {
     if(node_ptr->_topo_it == _topo_nodes.begin() || node_ptr->_topo_it == std::prev(_topo_nodes.end())) {
+      return true;
+    }
+  }
+
+  for(auto node_ptr : _breakable_nodes) {
+    if(node_ptr->_linked_to_is_actual) {
       return true;
     }
   }
@@ -1636,7 +1647,9 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   //   Process backward edges
   //   Check if the updated topological sequence will invalid _breakable_nodes, if so, rebuild _breakable_nodes
   process_backward_edges_taskflow();
+  _taskflow.dump(std::cout);
   if(_need_to_rebuild_breakable_nodes()) {
+    std::cout << "invoke?????\n";
     _build_breakable_nodes(max_parallelism);
   }
 
@@ -1644,18 +1657,46 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
   std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism);
 
-  _taskflow.dump(std::cout);
-
   // Step 4:
   //   Break taskflow linear chain based on selected_breakable_nodes
   for(auto node_ptr : selected_breakable_nodes) {
     auto next_it = std::next(node_ptr->_topo_it);
     Node* next = *next_it;
+    std::cout << "removed " << node_ptr->_name << " -> " << next->_name << "\n";
+    // node_ptr->_task.remove_successors(next->_task);
+    std::cout << "before remove: " << node_ptr->_name << " -> " << next->_name << "\n";
+    node_ptr->_task.for_each_successor([&](tf::Task t){
+      std::cout << "  successor: " << t.name() << "\n";
+    });
+
     node_ptr->_task.remove_successors(next->_task);
+
+    std::cout << "after remove: " << node_ptr->_name << " -> " << next->_name << "\n";
+    node_ptr->_task.for_each_successor([&](tf::Task t){
+      std::cout << "  successor: " << t.name() << "\n";
+    });
   }
 
+  std::cout << "taskflow to run\n";
+  _taskflow.dump(std::cout);
+
+  // Step 5:
+  //   Run taskflow
   _executor.run(_taskflow).wait();
 
+  // Step 6:
+  //   Recover taskflow back to linear chain for next iteration
+  for(auto node_ptr : selected_breakable_nodes) {
+    auto next_it = std::next(node_ptr->_topo_it);
+    Node* next = *next_it;
+    node_ptr->_task.precede(next->_task);
+    std::cout << "after recover: " << node_ptr->_name << " -> " << next->_name << "\n";
+    node_ptr->_task.for_each_successor([&](tf::Task t){
+      std::cout << "  successor: " << t.name() << "\n";
+    });
+  }
+
+  std::cout << "recovered taskflow\n";
   _taskflow.dump(std::cout);
 
   // print breakable nodes
@@ -1671,6 +1712,51 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   }
   std::cout << "\n";
 
+}
+
+void Graph::print_topo_order() const {
+  
+  std::cout << "_topo_nodes = \n";
+  for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+    std::cout << (*it)->_name << " ";
+  }
+  std::cout << "\n";
+}
+
+void Graph::add_backward_edge() {
+
+  // topo sequence: 0 7 8 9 4 5 6 1 2 3 10
+  // original breakable nodes: 9 and 6
+  // add one from 5 to 7 (bedge)
+  // add one from 9 to 6
+  // after should be just 6
+  size_t pos = 0;
+  Node* from = nullptr;
+  Node* to = nullptr;
+  for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+    if(pos == 1) {
+      to = *it;
+    }
+    if(pos == 5) {
+      from = *it; 
+    }
+    pos++;
+  }
+
+  insert_edge(from, to, RunMode::IncrementalPartition);
+
+  pos = 0;
+  for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+    if(pos == 6) {
+      to = *it;
+    }
+    if(pos == 3) {
+      from = *it; 
+    }
+    pos++;
+  }
+
+  insert_edge(from, to, RunMode::IncrementalPartition);
 }
 
 } // end of namespace pasta
