@@ -4,6 +4,9 @@ int main() {
 
   pasta::Graph graph("../benchmarks/manual.txt");
 
+  std::cout << "original graph topology\n";
+  graph.dump_graph();
+
   // pasta::Node* A = graph.insert_node("A");
   // pasta::Node* B = graph.insert_node("B");
   // pasta::Node* C = graph.insert_node("C");
@@ -53,8 +56,6 @@ int main() {
   std::cout << "num_nodes: " << graph.num_nodes() << "\n";
   std::cout << "num_edges: " << graph.num_edges() << "\n";
 
-  graph.print_topo_order();
-
   size_t num_incre_itr = 100; // we will have totally 1k incremental iterations
 
   size_t count = 0;
@@ -66,12 +67,10 @@ int main() {
   graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
 
   graph.add_backward_edge(); 
+  std::cout << "Original graph after adding edges\n";
+  graph.dump_graph();
 
   graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
-
-  graph.print_topo_order();
-
-
 }
 
 

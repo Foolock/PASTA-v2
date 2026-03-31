@@ -51,7 +51,45 @@ int main(int argc, char* argv[]) {
 
   pasta::RunMode mode = pasta::RunMode::IncrementalPartition;
 
-  graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
+  int num_streams = max_parallelism; // start at 8
+  int dir = -1;                          // going down first: 8->7->...->1
+
+  while (count < num_incre_itr) {
+
+    // std::cout << "---------------------\n";
+    // std::cout << "running " << count + 1 << " th incremental iteration.\n";
+    // std::cout << "---------------------\n";
+
+    // run with current setting
+    graph.run_graph_incre_partition(matrix_size, num_streams, max_parallelism);
+
+    // get N random numbers
+    std::vector<int> random_edges = generate_random_nums(graph.num_edges(), N, gen);
+    std::sort(random_edges.begin(), random_edges.end());
+
+    // remove N edges randomly
+    graph.remove_random_edges(N, gen, mode);
+
+    // add N edges randomly
+    graph.add_random_edges(N, gen, 20, mode); 
+
+    if(graph.has_cycle_before_partition() == true) {
+      std::cerr << "has cycle!\n";
+      std::exit(EXIT_FAILURE);
+    }
+
+    // update semaphore for next iteration: bounce between [1, max_parallelism]
+    num_streams += dir;
+    if (num_streams <= 1) {
+      num_streams = 1;
+      dir = +1;
+    } else if (num_streams >= max_parallelism) {
+      num_streams = max_parallelism;
+      dir = -1;
+    }
+
+    ++count;
+  }
 
   return 0;
 }

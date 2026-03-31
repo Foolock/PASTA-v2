@@ -115,16 +115,19 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
   return node_ptr;
 }
 
-Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode, bool is_limit_parallelism) {
+Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode) {
 
-  if(_initialized) {
-    // cannot do this, the _topo_nodes has not been updated yet.
-    auto it = from->_topo_it;
-    Node* next = *(std::next(it));
-    if(next == to) {
-      from->_linked_to_is_actual = true;
-    }
-  }
+  // update _fanout_set
+  from->_fanout_set.insert(to);
+
+  // cannot do this, the _topo_nodes has not been updated yet.
+  // if(_initialized) {
+  //   auto it = from->_topo_it;
+  //   Node* next = *(std::next(it));
+  //   if(next == to) {
+  //     from->_linked_to_is_actual = true;
+  //   }
+  // }
 
   // Edge edge;
   Edge* edge_ptr = &_edges.emplace_back();
@@ -194,6 +197,9 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
 
   Node* from = edge->_from;
   Node* to = edge->_to;
+
+  // update _fanout_set
+  from->_fanout_set.erase(to);
 
   auto it = from->_topo_it;
   Node* next = *(std::next(it));
@@ -824,23 +830,32 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
 }
 
 void Graph::dump_graph() {
+  // Create a local Taskflow object for dumping
+  tf::Taskflow local_taskflow;
 
-  // tf::Taskflow taskflow;
-  // tf::Executor executor;
+  // Create a local mapping of tasks
+  std::unordered_map<Node*, tf::Task> task_map;
 
-  // auto start = std::chrono::steady_clock::now();
-  // for(auto& node : _nodes) {
-  //   node._task = taskflow.emplace([this]() {
-  //   }).name(node._name);
-  // }
+  for (auto& node : _nodes) {
+    // Ensure node is a pointer
+    pasta::Node* node_ptr = &node;
 
-  // for(auto& node : _nodes) {
-  //   for(auto fanout : node._fanouts) {
-  //     node._task.precede(fanout->_to->_task);
-  //   }
-  // }
+    // Create a task for each node
+    task_map[node_ptr] = local_taskflow.emplace([node_ptr]() {
+    // Task body can be customized if needed
+    }).name(node_ptr->_name);
+  }
 
-  // taskflow.dump(std::cout);
+  // Define the dependencies
+  for (auto& node : _nodes) {
+    for (auto fanout : node._fanouts) {
+      pasta::Node* node_ptr = &node;
+      task_map[node_ptr].precede(task_map[fanout->_to]);
+    }
+  }
+
+  // Dump the graph to the output stream
+  local_taskflow.dump(std::cout);
 }
 
 std::vector<Node*> Graph::_get_topo_order_bfs() {
@@ -1165,12 +1180,7 @@ std::vector<Node*> Graph::_get_topo_order_dfs() {
 }
 
 bool Graph::_has_original_edge(Node* from, Node* to) const {
-  for(auto e : from->_fanouts) {
-    if(e->_to == to) {
-      return true;
-    }
-  }
-  return false;
+  return from->_fanout_set.find(to) != from->_fanout_set.end();
 } 
 
 void Graph::generate_topo_order() {
@@ -1328,12 +1338,10 @@ void Graph::_update_taskflow_sequence(Node* left_update_bound, Node* right_updat
   // For each node in [left_update_bound, right_update_bound],
   // check if cur->_linked_to == next,
   // if so, no need to update _task and _linked_to_is_actual
-  // if not, first update _task:
-  //                if _linked_to_is_actual = true, skip
+  // if not, update _task and _linked_to_is_actual:
+  //                cur->_linked_to_is_actual = _has_original_edge(cur, cur->_linked_to)  
   //                if _linked_to_is_actual = false, cur->_task.remove_successors(cur->_linked_to->_task)
   //                cur->_linked_to = next
-  //                cur->_task.precede(linked_to->_task)
-  //                cur->_linked_to_is_actual = _has_original_edge(cur, cur->_linked_to)  
   for(auto it = left_update_bound->_topo_it; it != right_update_bound->_topo_it; it++) {
     Node* cur = *it;
     Node* next = *(std::next(it)); // I have made sure right_update_bound as non nullptr.
@@ -1344,7 +1352,6 @@ void Graph::_update_taskflow_sequence(Node* left_update_bound, Node* right_updat
         cur->_task.remove_successors(cur->_linked_to->_task);
       }
       cur->_linked_to = next;
-      cur->_task.precede(cur->_linked_to->_task);
       cur->_linked_to_is_actual = _has_original_edge(cur, cur->_linked_to);
     }
   }
@@ -1537,11 +1544,11 @@ void Graph::_construct_taskflow_linear_chain(size_t matrix_size) {
     }
   }
 
-  // connect extra dependencies as a linear chain based on _topo_nodes
-  for(auto it = _topo_nodes.begin(); it != std::prev(_topo_nodes.end()); it++) {
-    Node* cur = *it;
-    Node* next = *(std::next(it)); 
-    cur->_task.precede(next->_task);
+  // connect extra dependencies as a linear chain based on _breakable nodes 
+  for(auto node_ptr : _breakable_nodes) {
+    auto next_it = std::next(node_ptr->_topo_it);
+    Node* next = *next_it;
+    node_ptr->_task.precede(next->_task);
   }
 
 }
@@ -1635,11 +1642,11 @@ bool Graph::_need_to_rebuild_breakable_nodes() const {
 void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {  
 
   // Step 1 (only done once in the first complete run): 
-  //   Construct taskflow graph as a linear chain based on _topo_nodes 
   //   Get the break point vectors based on max_parallelism
+  //   Construct taskflow graph as a linear chain based on _breakable_nodes 
   if(_first_run) {
-    _construct_taskflow_linear_chain(matrix_size);
     _build_breakable_nodes(max_parallelism);
+    _construct_taskflow_linear_chain(matrix_size);
   }
   _first_run = false;
 
@@ -1647,11 +1654,12 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   //   Process backward edges
   //   Check if the updated topological sequence will invalid _breakable_nodes, if so, rebuild _breakable_nodes
   process_backward_edges_taskflow();
-  _taskflow.dump(std::cout);
   if(_need_to_rebuild_breakable_nodes()) {
-    std::cout << "invoke?????\n";
     _build_breakable_nodes(max_parallelism);
   }
+
+  std::cout << "Linear chain Taskflow graph with extra dependency\n";
+  _taskflow.dump(std::cout);
 
   // Step 3:
   //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
@@ -1662,22 +1670,10 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   for(auto node_ptr : selected_breakable_nodes) {
     auto next_it = std::next(node_ptr->_topo_it);
     Node* next = *next_it;
-    std::cout << "removed " << node_ptr->_name << " -> " << next->_name << "\n";
-    // node_ptr->_task.remove_successors(next->_task);
-    std::cout << "before remove: " << node_ptr->_name << " -> " << next->_name << "\n";
-    node_ptr->_task.for_each_successor([&](tf::Task t){
-      std::cout << "  successor: " << t.name() << "\n";
-    });
-
     node_ptr->_task.remove_successors(next->_task);
-
-    std::cout << "after remove: " << node_ptr->_name << " -> " << next->_name << "\n";
-    node_ptr->_task.for_each_successor([&](tf::Task t){
-      std::cout << "  successor: " << t.name() << "\n";
-    });
   }
 
-  std::cout << "taskflow to run\n";
+  std::cout << "Segmented Taskflow\n";
   _taskflow.dump(std::cout);
 
   // Step 5:
@@ -1690,14 +1686,14 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
     auto next_it = std::next(node_ptr->_topo_it);
     Node* next = *next_it;
     node_ptr->_task.precede(next->_task);
-    std::cout << "after recover: " << node_ptr->_name << " -> " << next->_name << "\n";
-    node_ptr->_task.for_each_successor([&](tf::Task t){
-      std::cout << "  successor: " << t.name() << "\n";
-    });
   }
 
-  std::cout << "recovered taskflow\n";
-  _taskflow.dump(std::cout);
+  // print topological order
+  std::cout << "_topo_nodes = \n";
+  for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+    std::cout << (*it)->_name << " ";
+  }
+  std::cout << "\n";
 
   // print breakable nodes
   std::cout << "_breakable_nodes: \n";

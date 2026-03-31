@@ -4,6 +4,7 @@
 #include <string>
 #include <list>
 #include <random>
+#include <set>
 #include "taskflow/taskflow.hpp"
 #include "wsq.hpp"
 
@@ -86,8 +87,9 @@ class Node {
     uint64_t _dfs_tag = 0;
 
     // Indicate the edge between this node and its next node in _topo_nodes exists in the original graph
-    Node* _linked_to = nullptr;
+    Node* _linked_to = nullptr; // linked_to is used to check if Taskflow has the same topological order as my graph
     bool _linked_to_is_actual = false;
+    std::set<Node*> _fanout_set; // to quickly identify if v is a fanout of u
 
 };
 
@@ -143,7 +145,7 @@ class Graph {
      // basic ops
     Node* insert_node(const std::string& name = "", RunMode mode = RunMode::None, size_t matrix_size = 8);
     // if is_limit_parallelism = true, this edge is used to limit parallelism and thus cannot be removed
-    Edge* insert_edge(Node* from, Node* to, RunMode mode = RunMode::None, bool is_limit_parallelism = false);
+    Edge* insert_edge(Node* from, Node* to, RunMode mode = RunMode::None);
     void remove_node(Node* node, RunMode mode = RunMode::None);
     void remove_edge(Edge* edge, RunMode mode = RunMode::None);
 
