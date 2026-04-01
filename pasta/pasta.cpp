@@ -2,7 +2,7 @@
 
 namespace pasta {
 
-Graph::Graph(const std::string& filename) {
+Graph::Graph(const std::string& filename, RunMode mode, size_t matrix_size) {
 
   /*
     file format example:
@@ -32,7 +32,12 @@ Graph::Graph(const std::string& filename) {
     infile >> node_name;
     // remove quotes from node name
     node_name = node_name.substr(1, node_name.size()-3);
-    name_map[node_name] = insert_node(node_name);
+    if(mode == RunMode::IncrementalPartition) {
+      name_map[node_name] = insert_node(node_name, mode, matrix_size);
+    }
+    else {
+      name_map[node_name] = insert_node(node_name);
+    }
   }
 
   // read edges and add them to the graph
@@ -40,7 +45,12 @@ Graph::Graph(const std::string& filename) {
   while(infile >> from >> arrow >> to) {
     from = from.substr(1, from.size()-2);
     to = to.substr(1, to.size()-3);
-    insert_edge(name_map[from], name_map[to]);
+    if(mode == RunMode::IncrementalPartition) {
+      insert_edge(name_map[from], name_map[to], mode);
+    }
+    else {
+      insert_edge(name_map[from], name_map[to]);
+    }
   }
 
   // initialize topological seqenuce after constructing the graph
@@ -84,7 +94,7 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
 
   auto start_construct = std::chrono::steady_clock::now();
   // if run taskflow with semaphore
-  if(mode == RunMode::Semaphore) {
+  if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
     node_ptr->_task = _taskflow.emplace([this, matrix_size]() {
       // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
       size_t N = matrix_size;
@@ -102,7 +112,7 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
           C[n*M + m] = temp;
         }
       }
-    });
+    }).name(node_ptr->_name);
     node_ptr->_task.acquire(_semaphore);
     node_ptr->_task.release(_semaphore);
   }
@@ -1293,8 +1303,13 @@ bool Graph::process_backward_edges_taskflow() {
     // Before move around topo_nodes,
     // record left_update_bound and right_update_bound for _taskflow sequence
     // only consider update _task and _linked_to_is_actual for nodes in [left_update_bound, right_update_bound) 
-    Node* left_update_bound = (*(std::prev(to->_topo_it)) != nullptr)? *(std::prev(to->_topo_it)) : *(to->_topo_it);
-    Node* right_update_bound = (*(std::next(from->_topo_it)) != nullptr)? *(std::next(from->_topo_it)) : *(from->_topo_it);
+    // Node* left_update_bound = (*(std::prev(to->_topo_it)) != nullptr)? *(std::prev(to->_topo_it)) : *(to->_topo_it);
+    // Node* right_update_bound = (*(std::next(from->_topo_it)) != nullptr)? *(std::next(from->_topo_it)) : *(from->_topo_it);
+    auto lit = (to->_topo_it == _topo_nodes.begin()) ? to->_topo_it : std::prev(to->_topo_it);
+    auto rit = (std::next(from->_topo_it) == _topo_nodes.end()) ? from->_topo_it : std::next(from->_topo_it);
+
+    Node* left_update_bound = *lit;
+    Node* right_update_bound = *rit;
 
     std::list<Node*> moved;
 
@@ -1345,7 +1360,8 @@ void Graph::_update_taskflow_sequence(Node* left_update_bound, Node* right_updat
   for(auto it = left_update_bound->_topo_it; it != right_update_bound->_topo_it; it++) {
     Node* cur = *it;
     Node* next = *(std::next(it)); // I have made sure right_update_bound as non nullptr.
-    if(cur->_linked_to != next) {
+                                   // But cur->_linked_to can be nullptr if cur is the last one!
+    if(cur->_linked_to != next && cur->_linked_to != nullptr) {
       // if(!cur->_linked_to_is_actual) {
       if(!_has_original_edge(cur, cur->_linked_to)) { // have to do the recheck 
                                                       // cuz user may add edge after you have build up the _topo_nodes
@@ -1515,34 +1531,36 @@ void Graph::_relabel_full() {
 
 void Graph::_construct_taskflow_linear_chain(size_t matrix_size) {
 
+  // In IncrementalPartition mode, we have constructed the task in constructor 
   // emplace task
-  for(auto& node : _nodes) {
-    node._task = _taskflow.emplace([this, matrix_size, &node]() {
-      // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
-      size_t N = matrix_size;
-      size_t M = matrix_size;
-      size_t K = matrix_size;
-      std::vector<int> A(N*K, 1);
-      std::vector<int> B(K*M, 2);
-      std::vector<int> C(N*M);
-      for(size_t n=0; n<N; n++) {
-        for(size_t m=0; m<M; m++) {
-          int temp = 0;
-          for(size_t k=0; k<K; k++) {
-            temp += A[n*K + k] * B[k*M + m];
-          }
-          C[n*M + m] = temp;
-        }
-      }
-    }).name(node._name);
-  }
+  // for(auto& node : _nodes) {
+  //   node._task = _taskflow.emplace([this, matrix_size, &node]() {
+  //     // std::this_thread::sleep_for(std::chrono::nanoseconds(task_runtime));
+  //     size_t N = matrix_size;
+  //     size_t M = matrix_size;
+  //     size_t K = matrix_size;
+  //     std::vector<int> A(N*K, 1);
+  //     std::vector<int> B(K*M, 2);
+  //     std::vector<int> C(N*M);
+  //     for(size_t n=0; n<N; n++) {
+  //       for(size_t m=0; m<M; m++) {
+  //         int temp = 0;
+  //         for(size_t k=0; k<K; k++) {
+  //           temp += A[n*K + k] * B[k*M + m];
+  //         }
+  //         C[n*M + m] = temp;
+  //       }
+  //     }
+  //   }).name(node._name);
+  // }
 
+  // We have also connected the dependencies in constructor
   // connect original dependencies
-  for(auto& node : _nodes) {
-    for(auto fanout : node._fanouts) {
-      node._task.precede(fanout->_to->_task);
-    }
-  }
+  // for(auto& node : _nodes) {
+  //   for(auto fanout : node._fanouts) {
+  //     node._task.precede(fanout->_to->_task);
+  //   }
+  // }
 
   // connect extra dependencies as a linear chain based on _breakable nodes 
   for(auto node_ptr : _breakable_nodes) {
@@ -1753,6 +1771,74 @@ void Graph::add_backward_edge() {
   }
 
   insert_edge(from, to, RunMode::IncrementalPartition);
+}
+
+bool Graph::is_taskflow_topo_consistent() {
+
+  /*
+   * Actually run taskflow with edges changes
+   */
+  size_t max_parallelism = 8;
+  size_t cur_parallelism = 2;
+  size_t matrix_size = 1;
+
+  // Step 1 (only done once in the first complete run): 
+  //   Get the break point vectors based on max_parallelism
+  //   Construct taskflow graph as a linear chain based on _breakable_nodes 
+  if(_first_run) {
+    _build_breakable_nodes(max_parallelism);
+    _construct_taskflow_linear_chain(matrix_size);
+    // Check if the number of dependents & successors are the same
+    // Recover taskflow first
+    for(auto node_ptr : _breakable_nodes) {
+      node_ptr->_task.remove_successors(node_ptr->_linked_to->_task);
+    }
+    for(auto& node : _nodes) {
+      if((node._fanouts.size() != node._task.num_successors()) ||
+         (node._fanins.size() != node._task.num_predecessors())) {
+        return false;
+      }
+    }
+    // Make taskflow linear chain again
+    for(auto node_ptr : _breakable_nodes) {
+      node_ptr->_task.precede(node_ptr->_linked_to->_task);
+    }
+  }
+  _first_run = false;
+
+  // Step 2: 
+  //   Process backward edges
+  //   Check if the updated topological sequence will invalid _breakable_nodes, if so, rebuild _breakable_nodes
+  process_backward_edges_taskflow();
+  if(_need_to_rebuild_breakable_nodes()) {
+    _build_breakable_nodes(max_parallelism);
+  }
+
+  // Step 3:
+  //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
+  std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism);
+
+  // Step 4:
+  //   Break taskflow linear chain based on selected_breakable_nodes
+  for(auto node_ptr : selected_breakable_nodes) {
+    auto next_it = std::next(node_ptr->_topo_it);
+    Node* next = *next_it;
+    node_ptr->_task.remove_successors(next->_task);
+  }
+
+  // Step 5:
+  //   Run taskflow
+  _executor.run(_taskflow).wait();
+
+  // Step 6:
+  //   Recover taskflow back to linear chain for next iteration
+  for(auto node_ptr : selected_breakable_nodes) {
+    auto next_it = std::next(node_ptr->_topo_it);
+    Node* next = *next_it;
+    node_ptr->_task.precede(next->_task);
+  }
+
+  return true;
 }
 
 } // end of namespace pasta

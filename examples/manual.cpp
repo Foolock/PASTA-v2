@@ -2,9 +2,13 @@
 
 int main() {
 
-  pasta::Graph graph("../benchmarks/manual.txt");
+  std::mt19937 gen(42);
 
-  std::cout << "original graph topology\n";
+  pasta::RunMode mode = pasta::RunMode::IncrementalPartition;
+
+  pasta::Graph graph("../benchmarks/manual.txt", mode, 1);
+
+  std::cout << "Original Taskflow topology\n";
   graph.dump_graph();
 
   // pasta::Node* A = graph.insert_node("A");
@@ -60,9 +64,7 @@ int main() {
 
   size_t count = 0;
 
-  std::mt19937 gen(42);
-
-  pasta::RunMode mode = pasta::RunMode::IncrementalPartition;
+  // graph.remove_random_edges(5, gen, mode);
 
   graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
 

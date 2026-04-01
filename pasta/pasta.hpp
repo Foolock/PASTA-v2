@@ -140,9 +140,9 @@ class Graph {
   public:
     // constructors
     Graph() {};
-    Graph(const std::string& filename);
+    Graph(const std::string& filename, RunMode mode = RunMode::None, size_t matrix_size = 8);
 
-     // basic ops
+    // basic ops
     Node* insert_node(const std::string& name = "", RunMode mode = RunMode::None, size_t matrix_size = 8);
     // if is_limit_parallelism = true, this edge is used to limit parallelism and thus cannot be removed
     Edge* insert_edge(Node* from, Node* to, RunMode mode = RunMode::None);
@@ -241,6 +241,9 @@ class Graph {
     bool validate_modify_edge() const;
     void print_topo_order() const;
     void add_backward_edge();
+
+    // helper: verify Taskflow consistency with my graph object
+    bool is_taskflow_topo_consistent();
 
   private:
 
