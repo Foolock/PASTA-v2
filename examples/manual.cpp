@@ -57,6 +57,17 @@ int main() {
   int num_incre_ops = 10;
   int max_parallelism = 8;
 
+  // graph.remove_random_edges(10, gen, mode);
+  // // graph.remove_actual_edge();
+
+  // std::cout << "After removing edge\n";
+  // graph.dump_graph();
+
+  // if(!graph.is_taskflow_topo_consistent()) {
+  //   std::cerr << "Graph not consistent\n";
+  //   std::exit(EXIT_FAILURE);
+  // }
+
   std::cout << "num_nodes: " << graph.num_nodes() << "\n";
   std::cout << "num_edges: " << graph.num_edges() << "\n";
 

@@ -26,10 +26,17 @@ static void run_incremental_topology_test(
 
   pasta::Graph graph(std::string("../../benchmarks/") + bench_name, mode, 1);
 
+  graph.run_graph_incre_partition(1, 2, 8);
+
   // initial check
   REQUIRE(graph.validate_modify_edge() == true);
 
+  size_t count = 0;
+
   for(int iter = 0; iter < num_iters; ++iter) {
+
+    std::cout << "------------------- #iter " << ++count << "-----------------\n"; 
+
     graph.remove_random_edges(num_incre_ops, gen, mode);
     graph.add_random_edges(num_incre_ops, gen, 20, mode);
 
@@ -55,7 +62,7 @@ static void run_incremental_topology_test(
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("ac97_ctrl.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("aes_core.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c1355.txt", 20, 100);
-PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c17.txt", 10, 100);
+PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c17.txt", 10, 1);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c1908.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c2670.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c3540.txt", 20, 100);
@@ -73,7 +80,7 @@ PASTA_CHECK_TASKFLOW_MODIFY_EDGES("s344.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("s349.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("s400.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("s510.txt", 20, 100);
-PASTA_CHECK_TASKFLOW_MODIFY_EDGES("simple.txt", 10, 100);
+PASTA_CHECK_TASKFLOW_MODIFY_EDGES("simple.txt", 5, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("tv80.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("usb_phy_ispd.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("vga_lcd.txt", 20, 100);

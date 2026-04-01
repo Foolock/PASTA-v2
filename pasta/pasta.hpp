@@ -241,9 +241,15 @@ class Graph {
     bool validate_modify_edge() const;
     void print_topo_order() const;
     void add_backward_edge();
+    void remove_actual_edge();
 
     // helper: verify Taskflow consistency with my graph object
     bool is_taskflow_topo_consistent();
+
+    // helper: verify if Taskflow acts like a linear chain
+    // Returns true iff the taskflow has max parallelism 1,
+    // i.e. there is never more than one ready task in a topological execution.
+    bool is_taskflow_linear_chain();
 
   private:
 
@@ -266,6 +272,7 @@ class Graph {
 
     // get level list of current graph 
     std::vector<std::vector<Node*>> _get_level_list();
+    std::vector<std::vector<Node*>> _get_taskflow_level_list();
 
     // get topological order of current graph using BFS
     std::vector<Node*> _get_topo_order_bfs();
