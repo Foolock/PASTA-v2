@@ -132,14 +132,16 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode) {
   // update _fanout_set
   from->_fanout_set.insert(to);
 
-  // cannot do this, the _topo_nodes has not been updated yet.
-  // if(_initialized) {
-  //   auto it = from->_topo_it;
-  //   Node* next = *(std::next(it));
-  //   if(next == to) {
-  //     from->_linked_to_is_actual = true;
-  //   }
-  // }
+  // We only mark _linked_to_is_actual here for forward edges.
+  // Backward edges will be handled in process_backward_edges_taskflow().
+  if(_initialized && from->_pos < to->_pos) {
+    // if from->_pos < to->_pos, then from is not the last node
+    auto it = from->_topo_it;
+    Node* next = *(std::next(it));
+    if(next == to) {
+      from->_linked_to_is_actual = true;
+    }
+  }
 
   // Edge edge;
   Edge* edge_ptr = &_edges.emplace_back();
@@ -1432,14 +1434,14 @@ bool Graph::process_backward_edges_taskflow() {
     Node* left_update_bound = *lit;
     Node* right_update_bound = *rit;
 
-    std::cerr << "process edge: " << from->_name << " -> " << to->_name << "\n";
-    std::cerr << "current _topo_nodes = ";
-    for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
-      std::cout << (*it)->_name << " ";
-    }
-    std::cout << "\n";
-    std::cerr << "left_bound: " << left_update_bound->_name 
-              << " right_bound: " << right_update_bound->_name << "\n"; 
+    // std::cerr << "process edge: " << from->_name << " -> " << to->_name << "\n";
+    // std::cerr << "current _topo_nodes = ";
+    // for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+    //   std::cout << (*it)->_name << " ";
+    // }
+    // std::cout << "\n";
+    // std::cerr << "left_bound: " << left_update_bound->_name 
+    //           << " right_bound: " << right_update_bound->_name << "\n"; 
 
     // process taskflow sequence based on updated _topo_nodes
     _update_taskflow_sequence(left_update_bound, right_update_bound);
@@ -1474,9 +1476,9 @@ void Graph::_update_taskflow_sequence(Node* left_update_bound, Node* right_updat
   for(auto it = left_update_bound->_topo_it; it != std::next(right_update_bound->_topo_it); it++) {
     Node* cur = *it;
     if(it == std::prev(_topo_nodes.end())) {
-      if(!_has_original_edge(cur, cur->_linked_to) && cur->_linked_to != nullptr) {
-        cur->_task.remove_successors(cur->_linked_to->_task);
-      }
+      // if(!_has_original_edge(cur, cur->_linked_to) && cur->_linked_to != nullptr) {
+      //   cur->_task.remove_successors(cur->_linked_to->_task);
+      // }
       cur->_linked_to = nullptr;
       break;
     }
@@ -2019,7 +2021,6 @@ bool Graph::is_taskflow_linear_chain() {
     // std::cout << "\n";
     // index++;
     if(level.size() > 1) {
-      std::cout << "here?\n";
       return false;
     }
   }
@@ -2034,15 +2035,28 @@ bool Graph::is_linked_to_match_topo() {
     if(it != std::prev(_topo_nodes.end())) {
       Node* next = *(std::next(it));
       if(cur->_linked_to != next) {
-        std::cerr << "here1\n";
-        std::cerr << "cur: " << cur->_name 
-                  << " _linked_to: " << cur->_linked_to->_name
-                  << " next: " << next->_name << "\n";
         return false;
       }
     }
     else {
       if(cur->_linked_to != nullptr) {
+        return false;
+      }
+    }
+  }
+
+  for(auto& node : _nodes) {
+    if(node._linked_to != nullptr) {
+      if(node._linked_to_is_actual != _has_original_edge(&node, node._linked_to)) {
+        std::cerr << "node: " << node._name << " linked_to: " << node._linked_to->_name << "\n";
+        std::cerr << node._linked_to_is_actual << "\n";
+        std::cerr << "here1\n";
+        return false;
+      }
+    }
+    else {
+      // If this node is the last one and the flag is still on, then wrong
+      if(node._linked_to_is_actual == true) {
         std::cerr << "here2\n";
         return false;
       }

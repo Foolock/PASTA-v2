@@ -252,6 +252,7 @@ class Graph {
     bool is_taskflow_linear_chain();
 
     // helper: verify if _linked_to matches _topo_nodes
+    // Also verify if _linked_to_is_actual is correct
     bool is_linked_to_match_topo();
 
   private:
