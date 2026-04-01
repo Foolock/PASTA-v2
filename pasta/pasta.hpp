@@ -251,6 +251,9 @@ class Graph {
     // i.e. there is never more than one ready task in a topological execution.
     bool is_taskflow_linear_chain();
 
+    // helper: verify if _linked_to matches _topo_nodes
+    bool is_linked_to_match_topo();
+
   private:
 
     bool _initialized = false;

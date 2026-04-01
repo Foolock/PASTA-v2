@@ -1391,14 +1391,12 @@ bool Graph::process_backward_edges_taskflow() {
 
     // Before move around topo_nodes,
     // record left_update_bound and right_update_bound for _taskflow sequence
-    // only consider update _task and _linked_to_is_actual for nodes in [left_update_bound, right_update_bound) 
-    // Node* left_update_bound = (*(std::prev(to->_topo_it)) != nullptr)? *(std::prev(to->_topo_it)) : *(to->_topo_it);
-    // Node* right_update_bound = (*(std::next(from->_topo_it)) != nullptr)? *(std::next(from->_topo_it)) : *(from->_topo_it);
-    auto lit = (to->_topo_it == _topo_nodes.begin()) ? to->_topo_it : std::prev(to->_topo_it);
-    auto rit = (std::next(from->_topo_it) == _topo_nodes.end()) ? from->_topo_it : std::next(from->_topo_it);
-
-    Node* left_update_bound = *lit;
-    Node* right_update_bound = *rit;
+    // only consider update _task and _linked_to_is_actual for nodes in [left_update_bound, right_update_bound] 
+    // Take a snapshot of from and to before _topo_nodes changes
+    bool to_is_begin = to->_topo_it == _topo_nodes.begin();
+    bool from_is_end = std::next(from->_topo_it) == _topo_nodes.end();
+    auto lit = std::prev(to->_topo_it);
+    auto rit = std::next(from->_topo_it);
 
     std::list<Node*> moved;
 
@@ -1427,6 +1425,22 @@ bool Graph::process_backward_edges_taskflow() {
       _relabel_after_left_to_end(from, moved_size);
     }
 
+    // After _topo_nodes changes, fix lit and rit
+    lit = (to_is_begin) ? _topo_nodes.begin() : lit;
+    rit = (from_is_end) ? std::prev(_topo_nodes.end()) : rit;
+
+    Node* left_update_bound = *lit;
+    Node* right_update_bound = *rit;
+
+    std::cerr << "process edge: " << from->_name << " -> " << to->_name << "\n";
+    std::cerr << "current _topo_nodes = ";
+    for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+      std::cout << (*it)->_name << " ";
+    }
+    std::cout << "\n";
+    std::cerr << "left_bound: " << left_update_bound->_name 
+              << " right_bound: " << right_update_bound->_name << "\n"; 
+
     // process taskflow sequence based on updated _topo_nodes
     _update_taskflow_sequence(left_update_bound, right_update_bound);
 
@@ -1439,22 +1453,34 @@ bool Graph::process_backward_edges_taskflow() {
 void Graph::_update_taskflow_sequence(Node* left_update_bound, Node* right_update_bound) {
 
   // Traverse [left_update_bound, right_update_bound] in _topo_nodes.
-  // For each node in [left_update_bound, right_update_bound],
-  // check if cur->_linked_to == next,
-  // if so, no need to update _task and _linked_to_is_actual
-  // if not, update _task and _linked_to_is_actual:
-  //                cur->_linked_to_is_actual = _has_original_edge(cur, cur->_linked_to)  
-  //                if _linked_to_is_actual = false, cur->_task.remove_successors(cur->_linked_to->_task)
-  //                cur->_linked_to = next
+  /*
+    For each node in [left_update_bound, right_update_bound],
+    -> check if cur is the last one, 
+        -> yes, then check if cur->_linked_to is null
+            -> no, then check if cur and cur->_linked_to has actual edge 
+              (in this case, they should not, so no need to check actually)
+                -> no, remove this edge in taskflow
+           set cur->_linked_to = null, break
+        -> no, then continue...
+      
+    continue...
+    -> check if cur->_linked_to == next,
+        -> yes, no need to update _task and _linked_to_is_actual
+        -> no, update _task and _linked_to_is_actual:
+               cur->_linked_to_is_actual = _has_original_edge(cur, cur->_linked_to)  
+               if _linked_to_is_actual = false, cur->_task.remove_successors(cur->_linked_to->_task)
+               cur->_linked_to = next
+  */
   for(auto it = left_update_bound->_topo_it; it != std::next(right_update_bound->_topo_it); it++) {
     Node* cur = *it;
-    std::cout << "update for node " << cur->_name << "\n";
     if(it == std::prev(_topo_nodes.end())) {
+      if(!_has_original_edge(cur, cur->_linked_to) && cur->_linked_to != nullptr) {
+        cur->_task.remove_successors(cur->_linked_to->_task);
+      }
       cur->_linked_to = nullptr;
       break;
     }
     Node* next = *(std::next(it)); 
-    std::cout << "next " << next->_name << "\n";
     if(cur->_linked_to != next) {
       if(!_has_original_edge(cur, cur->_linked_to) &&
          cur->_linked_to != nullptr) { // have to do the recheck 
@@ -1911,7 +1937,7 @@ bool Graph::is_taskflow_topo_consistent() {
   //   Check if the updated topological sequence will invalid _breakable_nodes, if so, rebuild _breakable_nodes
   process_backward_edges_taskflow();
   if(_need_to_rebuild_breakable_nodes()) {
-    std::cout << "rebuild?-------\n";
+  //  std::cout << "rebuild?-------\n";
     _build_breakable_nodes(max_parallelism);
   }
 
@@ -1922,32 +1948,36 @@ bool Graph::is_taskflow_topo_consistent() {
   }
   std::cout << "\n";
 
-  // print breakable nodes
-  std::cout << "_breakable_nodes: \n";
-  for(auto node_ptr : _breakable_nodes) {
-    std::cout << node_ptr->_name << " ";
+  // After process backward edge, check _linked_to
+  if(!is_linked_to_match_topo()) {
+    return false;
   }
-  std::cout << "\n";
+
+  // // print breakable nodes
+  // std::cout << "_breakable_nodes: \n";
+  // for(auto node_ptr : _breakable_nodes) {
+  //   std::cout << node_ptr->_name << " ";
+  // }
+  // std::cout << "\n";
 
 
   // Since removing edges could also introduce new breakable nodes, 
   // we reconnect the dependencies for breakable nodes to make sure taskflow is still linear chain
   for(auto node_ptr : _breakable_nodes) {
-    std::cout << "breakable node : " << node_ptr->_name << "\n";
-    assert(node_ptr->_linked_to != nullptr);
+    // std::cout << "breakable node : " << node_ptr->_name << "\n";
+    // assert(node_ptr->_linked_to != nullptr);
     node_ptr->_task.remove_successors(node_ptr->_linked_to->_task);
   }
   for(auto node_ptr : _breakable_nodes) {
     node_ptr->_task.precede(node_ptr->_linked_to->_task);
   }
 
-  // Before breaking taskflow, make sure it is a linear chain
-  if(!is_taskflow_linear_chain()) {
-    return false;
-  }
+  // // Before breaking taskflow, make sure it is a linear chain
+  // if(!is_taskflow_linear_chain()) {
+  //   return false;
+  // }
 
   // _taskflow.dump(std::cout);
-
 
   // Step 3:
   //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
@@ -1991,6 +2021,31 @@ bool Graph::is_taskflow_linear_chain() {
     if(level.size() > 1) {
       std::cout << "here?\n";
       return false;
+    }
+  }
+
+  return true;
+}
+
+bool Graph::is_linked_to_match_topo() {
+
+  for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
+    Node* cur = *it;
+    if(it != std::prev(_topo_nodes.end())) {
+      Node* next = *(std::next(it));
+      if(cur->_linked_to != next) {
+        std::cerr << "here1\n";
+        std::cerr << "cur: " << cur->_name 
+                  << " _linked_to: " << cur->_linked_to->_name
+                  << " next: " << next->_name << "\n";
+        return false;
+      }
+    }
+    else {
+      if(cur->_linked_to != nullptr) {
+        std::cerr << "here2\n";
+        return false;
+      }
     }
   }
 

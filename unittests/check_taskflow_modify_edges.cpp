@@ -42,6 +42,8 @@ static void run_incremental_topology_test(
 
     REQUIRE(graph.has_cycle_before_partition() == false);
 
+    graph.dump_graph();
+
     REQUIRE(graph.is_taskflow_topo_consistent() == true);
   }
 }
@@ -62,7 +64,7 @@ static void run_incremental_topology_test(
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("ac97_ctrl.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("aes_core.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c1355.txt", 20, 100);
-PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c17.txt", 10, 1);
+PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c17.txt", 10, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c1908.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c2670.txt", 20, 100);
 PASTA_CHECK_TASKFLOW_MODIFY_EDGES("c3540.txt", 20, 100);
