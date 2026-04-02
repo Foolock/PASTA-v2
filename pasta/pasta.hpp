@@ -255,6 +255,9 @@ class Graph {
     // Also verify if _linked_to_is_actual is correct
     bool is_linked_to_match_topo();
 
+    // helper: verify if _breakable_nodes includes all the breakable nodes
+    bool is_breakable_nodes_complete();
+
   private:
 
     bool _initialized = false;
@@ -313,7 +316,7 @@ class Graph {
     void _construct_taskflow_linear_chain(size_t matrix_size); 
 
     // build breakable points
-    void _build_breakable_nodes(size_t max_parallelism);
+    void _build_breakable_nodes();
 
     // select breakable points
     std::vector<Node*> _select_breakable_nodes(size_t cur_parallelism) const;

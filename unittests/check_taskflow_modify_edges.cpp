@@ -26,8 +26,6 @@ static void run_incremental_topology_test(
 
   pasta::Graph graph(std::string("../../benchmarks/") + bench_name, mode, 1);
 
-  graph.run_graph_incre_partition(1, 2, 8);
-
   // initial check
   REQUIRE(graph.validate_modify_edge() == true);
 
@@ -41,8 +39,6 @@ static void run_incremental_topology_test(
     graph.add_random_edges(num_incre_ops, gen, 20, mode);
 
     REQUIRE(graph.has_cycle_before_partition() == false);
-
-    graph.dump_graph();
 
     REQUIRE(graph.is_taskflow_topo_consistent() == true);
   }
