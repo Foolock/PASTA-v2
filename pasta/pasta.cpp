@@ -1970,6 +1970,11 @@ bool Graph::is_taskflow_topo_consistent() {
     node_ptr->_task.precede(node_ptr->_linked_to->_task);
   }
 
+  // CHECK: Check if taskflow is a linear chain
+  if(!is_taskflow_linear_chain()) {
+    return false;
+  }
+
   // Step 4:
   //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
   std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism);
