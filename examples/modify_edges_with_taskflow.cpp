@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
 
   size_t N = num_incre_ops;
 
-  size_t num_incre_itr = 1; // we will have totally 1k incremental iterations
+  size_t num_incre_itr = 1000; // we will have totally 1k incremental iterations
 
   size_t count = 0;
 
@@ -56,9 +56,7 @@ int main(int argc, char* argv[]) {
 
   while (count < num_incre_itr) {
 
-    // std::cout << "---------------------\n";
-    // std::cout << "running " << count + 1 << " th incremental iteration.\n";
-    // std::cout << "---------------------\n";
+    // std::cout << "|------------ running " << count + 1 << " th iteration. -------------------|\n";
 
     // run with current setting
     graph.run_graph_incre_partition(matrix_size, num_streams, max_parallelism);
@@ -91,6 +89,10 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
+  std::cout << "avg critical path length (original): " 
+            << static_cast<double>(graph.get_critical_path_length_original()) / num_incre_itr << "\n";
+  std::cout << "avg critical path length (constrained): " 
+            << static_cast<double>(graph.get_critical_path_length_constrained()) / num_incre_itr << "\n";
   std::cout << "taskflow runtime: " << graph.get_incre_pasta_taskflow_runtime() << "us\n"; 
 
   return 0;

@@ -201,6 +201,12 @@ class Graph {
     inline size_t get_incre_pasta_taskflow_runtime() const {
       return _incre_pasta_taskflow_runtime;
     }
+    inline size_t get_critical_path_length_original() const {
+      return _critical_path_length_original;
+    }
+    inline size_t get_critical_path_length_constrained() const {
+      return _critical_path_length_constrained;
+    }
     void test_func();
 
     // check cycle
@@ -332,7 +338,10 @@ class Graph {
     bool _need_to_rebuild_breakable_nodes() const;
 
     // helper to get max parallelism of taskflow
-    bool _get_max_parallelism_taskflow();
+    size_t _get_max_parallelism_taskflow();
+
+    // helper to get critical path of taskflow
+    size_t _get_critical_path_length_taskflow();
 
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;
@@ -343,8 +352,10 @@ class Graph {
     size_t _incre_partition_runtime_with_cudaflow_partition = 0;
     size_t _incre_construct_runtime_with_cudaflow = 0;
 
-    // incremental partitioning runtime
+    // incremental partitioning (pasta) 
     size_t _incre_pasta_taskflow_runtime = 0;
+    size_t _critical_path_length_original = 0;
+    size_t _critical_path_length_constrained = 0;
 
     tf::Taskflow _taskflow;
     tf::Executor _executor{std::thread::hardware_concurrency()};

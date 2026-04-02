@@ -1795,8 +1795,7 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
     _build_breakable_nodes();
   }
 
-  _taskflow.dump(std::cout);
-  std::cout << "max parallelism before edge insertion = " << _get_max_parallelism_taskflow() << "\n";
+  _critical_path_length_original += _get_critical_path_length_taskflow();
 
   // Step 3:
   //   Make taskflow linear chain with the latest breakable nodes
@@ -1814,10 +1813,9 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
     auto next_it = std::next(node_ptr->_topo_it);
     Node* next = *next_it;
     node_ptr->_task.remove_successors(next->_task);
-    std::cout << "edge removed.\n";
   }
 
-  std::cout << "max parallelism = " << _get_max_parallelism_taskflow() << "\n";
+  _critical_path_length_constrained += _get_critical_path_length_taskflow();
 
   // Step 6:
   //   Run taskflow
@@ -1869,7 +1867,7 @@ void Graph::run_graph_incre_partition_seq(size_t matrix_size, size_t cur_paralle
   //   node_ptr->_task.remove_successors(next->_task);
   // }
 
-  std::cout << "max parallelism = " << _get_max_parallelism_taskflow() << "\n";
+  _critical_path_length_constrained += _get_critical_path_length_taskflow();
 
   // Step 6:
   //   Run taskflow
@@ -2043,7 +2041,7 @@ bool Graph::is_taskflow_linear_chain() {
   return true;
 }
 
-bool Graph::_get_max_parallelism_taskflow() {
+size_t Graph::_get_max_parallelism_taskflow() {
 
   std::vector<std::vector<Node*>> level_list = _get_taskflow_level_list();
 
@@ -2053,6 +2051,77 @@ bool Graph::_get_max_parallelism_taskflow() {
   }
 
   return parallelism;
+}
+
+size_t Graph::_get_critical_path_length_taskflow() {
+
+  std::vector<tf::Task> tasks;
+  tasks.reserve(_taskflow.num_tasks());
+
+  // task name -> index
+  std::unordered_map<std::string, size_t> task_index;
+  task_index.reserve(_taskflow.num_tasks());
+
+  _taskflow.for_each_task([&](tf::Task t) {
+    task_index[t.name()] = tasks.size();
+    tasks.push_back(t);
+  });
+
+  if(tasks.empty()) {
+    return 0;
+  }
+
+  // indegree for topological traversal
+  std::vector<size_t> indeg(tasks.size(), 0);
+  for(size_t i = 0; i < tasks.size(); ++i) {
+    indeg[i] = tasks[i].num_predecessors();
+  }
+
+  // dp[i] = longest path length ending at task i
+  // here length is measured in number of nodes on the path
+  std::vector<size_t> dp(tasks.size(), 1);
+
+  std::queue<size_t> q;
+  for(size_t i = 0; i < tasks.size(); ++i) {
+    if(indeg[i] == 0) {
+      q.push(i);
+    }
+  }
+
+  size_t visited = 0;
+  size_t longest = 0;
+
+  while(!q.empty()) {
+    size_t u = q.front();
+    q.pop();
+    ++visited;
+
+    longest = std::max(longest, dp[u]);
+
+    tasks[u].for_each_successor([&](tf::Task succ) {
+      auto sit = task_index.find(succ.name());
+      if(sit == task_index.end()) {
+        throw std::runtime_error(
+          "cannot find successor index for task " + succ.name()
+        );
+      }
+
+      size_t v = sit->second;
+
+      // relax longest path
+      dp[v] = std::max(dp[v], dp[u] + 1);
+
+      if(--indeg[v] == 0) {
+        q.push(v);
+      }
+    });
+  }
+
+  if(visited != tasks.size()) {
+    throw std::runtime_error("Taskflow graph is not a DAG");
+  }
+
+  return longest;
 }
 
 bool Graph::is_linked_to_match_topo() {
