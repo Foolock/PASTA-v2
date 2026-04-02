@@ -198,6 +198,9 @@ class Graph {
     inline size_t get_num_backward_edges() const {
       return _num_backward_edges;
     }
+    inline size_t get_incre_pasta_taskflow_runtime() const {
+      return _incre_pasta_taskflow_runtime;
+    }
     void test_func();
 
     // check cycle
@@ -230,6 +233,7 @@ class Graph {
     // cur_parallelism is the parallelism limit for current iteration
     // max_parallelism is the maximum potential parallelism
     void run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
+    void run_graph_incre_partition_seq(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
 
     bool process_backward_edges(); // process backward edges based on std::list
     bool process_backward_edges_taskflow(); // process backward edges based on node class
@@ -327,6 +331,9 @@ class Graph {
     // helper to check if we need to rebuild breakable points
     bool _need_to_rebuild_breakable_nodes() const;
 
+    // helper to get max parallelism of taskflow
+    bool _get_max_parallelism_taskflow();
+
     // incremental update with semaphore runtime
     size_t _incre_runtime_with_semaphore = 0;
     size_t _incre_runtime_with_semaphore_graph_construct = 0;
@@ -335,6 +342,9 @@ class Graph {
     size_t _incre_runtime_with_cudaflow_partition = 0;
     size_t _incre_partition_runtime_with_cudaflow_partition = 0;
     size_t _incre_construct_runtime_with_cudaflow = 0;
+
+    // incremental partitioning runtime
+    size_t _incre_pasta_taskflow_runtime = 0;
 
     tf::Taskflow _taskflow;
     tf::Executor _executor{std::thread::hardware_concurrency()};

@@ -8,6 +8,7 @@ set(PASTA_EXAMPLES
   incre_cudaflow_partition 
   modify_edges
   modify_edges_with_taskflow
+  modify_edges_with_taskflow_seq
   mis
   cudaflow_partition
   semaphore

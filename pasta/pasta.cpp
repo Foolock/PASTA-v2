@@ -1782,10 +1782,8 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
 
   // Step 1 (only done once in the first complete run): 
   //   Get the break point vectors based on max_parallelism
-  //   Construct taskflow graph as a linear chain based on _breakable_nodes 
   if(_first_run) {
     _build_breakable_nodes();
-    _construct_taskflow_linear_chain(matrix_size);
   }
   _first_run = false;
 
@@ -1794,73 +1792,98 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   //   Check if the updated topological sequence will invalid _breakable_nodes, if so, rebuild _breakable_nodes
   process_backward_edges_taskflow();
   if(_need_to_rebuild_breakable_nodes()) {
-    // remove all original breakable edges from taskflow
-    for(auto node_ptr : _breakable_nodes) {
-      node_ptr->_task.remove_successors(node_ptr->_linked_to->_task);
-    }
     _build_breakable_nodes();
   }
 
-  // Since removing edges could also introduce new breakable nodes, 
-  // we reconnect the dependencies for breakable nodes to make sure taskflow is still linear chain
-  for(auto node_ptr : _breakable_nodes) {
-    node_ptr->_task.remove_successors(node_ptr->_linked_to->_task);
-  }
+  _taskflow.dump(std::cout);
+  std::cout << "max parallelism before edge insertion = " << _get_max_parallelism_taskflow() << "\n";
+
+  // Step 3:
+  //   Make taskflow linear chain with the latest breakable nodes
   for(auto node_ptr : _breakable_nodes) {
     node_ptr->_task.precede(node_ptr->_linked_to->_task);
   }
 
-  // std::cout << "Linear chain Taskflow graph with extra dependency\n";
-  // _taskflow.dump(std::cout);
-
-  // Step 3:
+  // Step 4:
   //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
   std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism);
 
-  // Step 4:
+  // Step 5:
   //   Break taskflow linear chain based on selected_breakable_nodes
   for(auto node_ptr : selected_breakable_nodes) {
     auto next_it = std::next(node_ptr->_topo_it);
     Node* next = *next_it;
     node_ptr->_task.remove_successors(next->_task);
+    std::cout << "edge removed.\n";
   }
 
-  // std::cout << "Segmented Taskflow\n";
-  // _taskflow.dump(std::cout);
-
-  // Step 5:
-  //   Run taskflow
-  _executor.run(_taskflow).wait();
+  std::cout << "max parallelism = " << _get_max_parallelism_taskflow() << "\n";
 
   // Step 6:
-  //   Recover taskflow back to linear chain for next iteration
-  for(auto node_ptr : selected_breakable_nodes) {
-    auto next_it = std::next(node_ptr->_topo_it);
-    Node* next = *next_it;
-    node_ptr->_task.precede(next->_task);
+  //   Run taskflow
+  auto start = std::chrono::steady_clock::now();
+  _executor.run(_taskflow).wait();
+  auto end = std::chrono::steady_clock::now();
+  _incre_pasta_taskflow_runtime += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+
+  // Step 7:
+  //   Remove all the extra dependencies from taskflow to ensure a clean state for next iteration
+  for(auto node_ptr : _breakable_nodes) {
+    node_ptr->_task.remove_successors(node_ptr->_linked_to->_task);
+  }
+}
+
+void Graph::run_graph_incre_partition_seq(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {
+
+  // Step 1 (only done once in the first complete run): 
+  //   Get the break point vectors based on max_parallelism
+  if(_first_run) {
+    _build_breakable_nodes();
+  }
+  _first_run = false;
+
+  // Step 2: 
+  //   Process backward edges
+  //   Check if the updated topological sequence will invalid _breakable_nodes, if so, rebuild _breakable_nodes
+  process_backward_edges_taskflow();
+  if(_need_to_rebuild_breakable_nodes()) {
+    _build_breakable_nodes();
   }
 
-  // // print topological order
-  // std::cout << "_topo_nodes = \n";
-  // for(auto it = _topo_nodes.begin(); it != _topo_nodes.end(); it++) {
-  //   std::cout << (*it)->_name << " ";
-  // }
-  // std::cout << "\n";
+  // Step 3:
+  //   Make taskflow linear chain with the latest breakable nodes
+  for(auto node_ptr : _breakable_nodes) {
+    node_ptr->_task.precede(node_ptr->_linked_to->_task);
+  }
 
-  // // print breakable nodes
-  // std::cout << "_breakable_nodes: \n";
-  // for(auto node_ptr : _breakable_nodes) {
-  //   std::cout << node_ptr->_name << " ";
-  // }
-  // std::cout << "\n";
+  // Step 4:
+  //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
+  std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism);
 
-  // std::cout << "selected_breakable_nodes: \n";
+  // Remove this step to always run taskflow as a linear chain
+  // // Step 5:
+  // //   Break taskflow linear chain based on selected_breakable_nodes
   // for(auto node_ptr : selected_breakable_nodes) {
-  //   std::cout << node_ptr->_name << " ";
+  //   auto next_it = std::next(node_ptr->_topo_it);
+  //   Node* next = *next_it;
+  //   node_ptr->_task.remove_successors(next->_task);
   // }
-  // std::cout << "\n";
 
-}
+  std::cout << "max parallelism = " << _get_max_parallelism_taskflow() << "\n";
+
+  // Step 6:
+  //   Run taskflow
+  auto start = std::chrono::steady_clock::now();
+  _executor.run(_taskflow).wait();
+  auto end = std::chrono::steady_clock::now();
+  _incre_pasta_taskflow_runtime += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+
+  // Step 7:
+  //   Remove all the extra dependencies from taskflow to ensure a clean state for next iteration
+  for(auto node_ptr : _breakable_nodes) {
+    node_ptr->_task.remove_successors(node_ptr->_linked_to->_task);
+  }
+}  
 
 void Graph::print_topo_order() const {
   
@@ -2018,6 +2041,18 @@ bool Graph::is_taskflow_linear_chain() {
   }
 
   return true;
+}
+
+bool Graph::_get_max_parallelism_taskflow() {
+
+  std::vector<std::vector<Node*>> level_list = _get_taskflow_level_list();
+
+  size_t parallelism = 0;
+  for(auto level : level_list) {
+    parallelism = std::max(parallelism, level.size());
+  }
+
+  return parallelism;
 }
 
 bool Graph::is_linked_to_match_topo() {

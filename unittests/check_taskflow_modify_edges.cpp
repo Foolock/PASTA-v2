@@ -29,6 +29,8 @@ static void run_incremental_topology_test(
   // initial check
   REQUIRE(graph.validate_modify_edge() == true);
 
+  REQUIRE(graph.is_taskflow_topo_consistent() == true);
+
   size_t count = 0;
 
   for(int iter = 0; iter < num_iters; ++iter) {

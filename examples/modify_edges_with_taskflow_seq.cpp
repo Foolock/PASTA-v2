@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
 
   size_t N = num_incre_ops;
 
-  size_t num_incre_itr = 1; // we will have totally 1k incremental iterations
+  size_t num_incre_itr = 10; // we will have totally 1k incremental iterations
 
   size_t count = 0;
 
@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
     // std::cout << "---------------------\n";
 
     // run with current setting
-    graph.run_graph_incre_partition(matrix_size, num_streams, max_parallelism);
+    graph.run_graph_incre_partition_seq(matrix_size, num_streams, max_parallelism);
 
     // get N random numbers
     std::vector<int> random_edges = generate_random_nums(graph.num_edges(), N, gen);
@@ -91,7 +91,7 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
-  std::cout << "taskflow runtime: " << graph.get_incre_pasta_taskflow_runtime() << "us\n"; 
+  std::cout << "taskflow runtime(seq): " << graph.get_incre_pasta_taskflow_runtime() << "us\n"; 
 
   return 0;
 }
