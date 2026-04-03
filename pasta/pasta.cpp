@@ -1234,7 +1234,7 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
           C[n*M + m] = temp;
         }
       }
-    });
+    }).name(node._name);
   }
 
   for(auto& node : _nodes) {
@@ -1246,6 +1246,8 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
   size_t construct_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end1-start1).count();
   _incre_construct_runtime_with_cudaflow += construct_runtime;
 
+  _critical_path_length_constrained += _get_critical_path_length_taskflow();
+
   auto start = std::chrono::steady_clock::now();
   _executor.run(_taskflow).wait();
   auto end = std::chrono::steady_clock::now();
@@ -1254,9 +1256,13 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
 
 }
 
-void Graph::partition_cudaflow_incremental(size_t num_streams) {
+bool Graph::is_cudaflow_satisfy_parallelism(size_t cur_parallelism) {
 
+  run_graph_cudaflow_partition(1, cur_parallelism);
+
+  return _get_max_parallelism_taskflow() <= cur_parallelism;
 }
+
 
 std::vector<Node*> Graph::_get_topo_order_dfs() {
 
@@ -1738,9 +1744,20 @@ std::vector<Node*> Graph::_select_breakable_nodes(size_t cur_parallelism) const 
 
   selected.reserve(cur_parallelism - 1);
 
+  // for(size_t i = 1; i < cur_parallelism; ++i) {
+  //   size_t j = (i * _breakable_nodes.size()) / cur_parallelism;
+  //   selected.push_back(_breakable_nodes[j]);
+  // }
   for(size_t i = 1; i < cur_parallelism; ++i) {
     size_t j = (i * _breakable_nodes.size()) / cur_parallelism;
-    selected.push_back(_breakable_nodes[j]);
+
+    while(j < _breakable_nodes.size() && !_breakable_nodes[j]->_fanouts.empty()) {
+      ++j;
+    }
+
+    if(j < _breakable_nodes.size()) {
+      selected.push_back(_breakable_nodes[j]);
+    }
   }
 
   return selected;

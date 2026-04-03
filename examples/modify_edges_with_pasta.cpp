@@ -91,9 +91,9 @@ int main(int argc, char* argv[]) {
 
   std::cout << "avg critical path length (original): " 
             << static_cast<double>(graph.get_critical_path_length_original()) / num_incre_itr << "\n";
-  std::cout << "avg critical path length (constrained): " 
+  std::cout << "avg critical path length (pasta): " 
             << static_cast<double>(graph.get_critical_path_length_constrained()) / num_incre_itr << "\n";
-  std::cout << "taskflow runtime: " << graph.get_incre_pasta_taskflow_runtime() << "us\n"; 
+  std::cout << "taskflow runtime (pasta): " << graph.get_incre_pasta_taskflow_runtime() << " us\n"; 
 
   return 0;
 }

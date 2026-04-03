@@ -220,10 +220,6 @@ class Graph {
     // reconstruct graph based on cudaflow
     void partition_cudaflow(size_t num_streams = 4);
 
-    // Incremental CUDAFlow partition
-    // just add one extra fanin/fanout 
-    void partition_cudaflow_incremental(size_t num_streams = 4);
-
     // check if two DAGs that shares same set of vertices, 
     // one partitioned by cudaflow, one original, share at least one topological order
     // we just need to check if the union graph of G1 and G2 is acyclic
@@ -267,6 +263,9 @@ class Graph {
 
     // helper: verify if _breakable_nodes includes all the breakable nodes
     bool is_breakable_nodes_complete();
+
+    // helper: verify if cudaflow partitioned taskflow satisfies limited parallelism
+    bool is_cudaflow_satisfy_parallelism(size_t cur_parallelism);
 
   private:
 

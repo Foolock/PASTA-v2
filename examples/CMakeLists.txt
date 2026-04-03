@@ -7,8 +7,9 @@ set(PASTA_EXAMPLES
   incre_semaphore 
   incre_cudaflow_partition 
   modify_edges
-  modify_edges_with_taskflow
-  modify_edges_with_taskflow_seq
+  modify_edges_with_pasta 
+  modify_edges_with_pasta_seq
+  modify_edges_with_cudaflow 
   mis
   cudaflow_partition
   semaphore

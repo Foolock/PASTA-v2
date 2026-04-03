@@ -35,8 +35,6 @@ static void run_incremental_topology_test(
 
   for(int iter = 0; iter < num_iters; ++iter) {
 
-    std::cout << "------------------- #iter " << ++count << "-----------------\n"; 
-
     graph.remove_random_edges(num_incre_ops, gen, mode);
     graph.add_random_edges(num_incre_ops, gen, 20, mode);
 
@@ -51,7 +49,7 @@ static void run_incremental_topology_test(
 // --------------------------------------------------------
 
 #define PASTA_CHECK_TASKFLOW_MODIFY_EDGES(fname, ops, iters)                                     \
-  TEST_CASE(("check taskflow (only modify edges): " fname) * doctest::timeout(300)) {            \
+  TEST_CASE(("check pasta (only modify edges): " fname) * doctest::timeout(300)) {            \
     run_incremental_topology_test(fname, ops, iters);                                      \
   }
 
