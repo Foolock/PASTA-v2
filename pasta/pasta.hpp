@@ -198,14 +198,26 @@ class Graph {
     inline size_t get_num_backward_edges() const {
       return _num_backward_edges;
     }
-    inline size_t get_incre_pasta_taskflow_runtime() const {
-      return _incre_pasta_taskflow_runtime;
+    inline size_t get_pasta_taskflow_runtime() const {
+      return _pasta_taskflow_runtime;
     }
     inline size_t get_critical_path_length_original() const {
       return _critical_path_length_original;
     }
     inline size_t get_critical_path_length_constrained() const {
       return _critical_path_length_constrained;
+    }
+    inline size_t get_cudaflow_partitioning_runtime() const {
+      return _cudaflow_partitioning_runtime;
+    }
+    inline size_t get_pasta_partitioning_runtime() const {
+      return _pasta_partitioning_runtime;
+    }
+    inline size_t get_cudaflow_taskflow_buildtime() const {
+      return _cudaflow_taskflow_buildtime;
+    }
+    inline size_t get_pasta_taskflow_buildtime() const {
+      return _pasta_taskflow_buildtime;
     }
     void test_func();
 
@@ -234,8 +246,8 @@ class Graph {
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
     // cur_parallelism is the parallelism limit for current iteration
     // max_parallelism is the maximum potential parallelism
-    void run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
-    void run_graph_incre_partition_seq(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
+    void run_graph_pasta_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
+    void run_graph_pasta_partition_seq(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
 
     bool process_backward_edges(); // process backward edges based on std::list
     bool process_backward_edges_taskflow(); // process backward edges based on node class
@@ -293,7 +305,7 @@ class Graph {
     // get topological order of current graph using BFS
     std::vector<Node*> _get_topo_order_bfs();
 
-    // get topological order of current graph using DFS
+    // get topological order of current graph using BFS
     std::vector<Node*> _get_topo_order_dfs(); 
 
     // get reversed topological order of current graph using DFS 
@@ -351,8 +363,17 @@ class Graph {
     size_t _incre_partition_runtime_with_cudaflow_partition = 0;
     size_t _incre_construct_runtime_with_cudaflow = 0;
 
-    // incremental partitioning (pasta) 
-    size_t _incre_pasta_taskflow_runtime = 0;
+    // cudaflow partitioning.
+    // Apply full partitioning (topological sort) for each incremental iteration 
+    size_t _cudaflow_partitioning_runtime = 0;
+    size_t _cudaflow_taskflow_buildtime = 0;
+    size_t _cudaflow_taskflow_runtime = 0;
+
+    // pasta partitoning.
+    // Maintain topological order (by processing backward edges) for each incremental iteration 
+    size_t _pasta_partitioning_runtime = 0;
+    size_t _pasta_taskflow_buildtime = 0;
+    size_t _pasta_taskflow_runtime = 0;
     size_t _critical_path_length_original = 0;
     size_t _critical_path_length_constrained = 0;
 

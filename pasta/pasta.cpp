@@ -54,15 +54,15 @@ Graph::Graph(const std::string& filename, RunMode mode, size_t matrix_size) {
   }
 
   // initialize topological seqenuce after constructing the graph
-  std::vector<Node*> topo_dfs = _get_topo_order_dfs(); 
+  std::vector<Node*> topo = _get_topo_order_dfs(); 
 
   // assign linked fanin/fanout based on topological sequence
   // assign pos value
   uint64_t pos = 0;
   for(int i=0; i<_nodes.size(); i++) {
-    _topo_nodes.push_back(topo_dfs[i]);
-    topo_dfs[i]->_topo_it = std::prev(_topo_nodes.end());
-    topo_dfs[i]->_pos = pos;
+    _topo_nodes.push_back(topo[i]);
+    topo[i]->_topo_it = std::prev(_topo_nodes.end());
+    topo[i]->_pos = pos;
     pos += 1024;
   }
 
@@ -121,6 +121,7 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
   // we won't run semaphore and partitioning in the same program so I just add them both
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
   _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
+  _pasta_taskflow_buildtime += taskflow_constucttime;
 
   return node_ptr;
 }
@@ -173,6 +174,7 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode) {
   auto end_construct = std::chrono::steady_clock::now();
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
+  _pasta_taskflow_buildtime += taskflow_constucttime;
 
   // check if this is a backward edge by comparing _pos
   if(from->_pos > to->_pos) {
@@ -204,6 +206,7 @@ void Graph::remove_node(Node* node, RunMode mode) {
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
   _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
+  _pasta_taskflow_buildtime += taskflow_constucttime;
 
   _nodes.erase(node->_node_satellite);
 }
@@ -258,6 +261,7 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
   _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
+  _pasta_taskflow_buildtime += taskflow_constucttime;
 
   _edges.erase(edge->_satellite);
 }
@@ -1132,6 +1136,7 @@ void Graph::partition_cudaflow(size_t num_streams) {
   auto end = std::chrono::steady_clock::now();
   size_t partition_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
   _incre_partition_runtime_with_cudaflow_partition += partition_runtime;
+  _cudaflow_partitioning_runtime += partition_runtime;
 
   // if(!is_cudaflow_partition_share_same_topo_order()) {
   //   throw std::runtime_error("they do not share same topological order.\n");
@@ -1245,6 +1250,7 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
   auto end1 = std::chrono::steady_clock::now();
   size_t construct_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end1-start1).count();
   _incre_construct_runtime_with_cudaflow += construct_runtime;
+  _cudaflow_taskflow_buildtime += construct_runtime;
 
   _critical_path_length_constrained += _get_critical_path_length_taskflow();
 
@@ -1795,7 +1801,9 @@ bool Graph::_need_to_rebuild_breakable_nodes() const {
   return false;
 }
 
-void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {  
+void Graph::run_graph_pasta_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {  
+
+  auto partition_start = std::chrono::steady_clock::now();
 
   // Step 1 (only done once in the first complete run): 
   //   Get the break point vectors based on max_parallelism
@@ -1812,17 +1820,22 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
     _build_breakable_nodes();
   }
 
+  // Step 3:
+  //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
+  std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism);
+
+  auto partition_end = std::chrono::steady_clock::now();
+  _pasta_partitioning_runtime += std::chrono::duration_cast<std::chrono::microseconds>(partition_end-partition_start).count();
+
   _critical_path_length_original += _get_critical_path_length_taskflow();
 
-  // Step 3:
+  auto buildtaskflow_start = std::chrono::steady_clock::now();
+
+  // Step 4:
   //   Make taskflow linear chain with the latest breakable nodes
   for(auto node_ptr : _breakable_nodes) {
     node_ptr->_task.precede(node_ptr->_linked_to->_task);
   }
-
-  // Step 4:
-  //   Before each run, select the breakable nodes from _breakable_nodes based on cur_parallelism
-  std::vector<Node*> selected_breakable_nodes = _select_breakable_nodes(cur_parallelism);
 
   // Step 5:
   //   Break taskflow linear chain based on selected_breakable_nodes
@@ -1831,6 +1844,8 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
     Node* next = *next_it;
     node_ptr->_task.remove_successors(next->_task);
   }
+  auto buildtaskflow_end = std::chrono::steady_clock::now();
+  _pasta_taskflow_buildtime += std::chrono::duration_cast<std::chrono::microseconds>(buildtaskflow_end-buildtaskflow_start).count();
 
   _critical_path_length_constrained += _get_critical_path_length_taskflow();
 
@@ -1839,16 +1854,19 @@ void Graph::run_graph_incre_partition(size_t matrix_size, size_t cur_parallelism
   auto start = std::chrono::steady_clock::now();
   _executor.run(_taskflow).wait();
   auto end = std::chrono::steady_clock::now();
-  _incre_pasta_taskflow_runtime += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  _pasta_taskflow_runtime += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
 
+  buildtaskflow_start = std::chrono::steady_clock::now();
   // Step 7:
   //   Remove all the extra dependencies from taskflow to ensure a clean state for next iteration
   for(auto node_ptr : _breakable_nodes) {
     node_ptr->_task.remove_successors(node_ptr->_linked_to->_task);
   }
+  buildtaskflow_end = std::chrono::steady_clock::now();
+  _pasta_taskflow_buildtime += std::chrono::duration_cast<std::chrono::microseconds>(buildtaskflow_end-buildtaskflow_start).count();
 }
 
-void Graph::run_graph_incre_partition_seq(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {
+void Graph::run_graph_pasta_partition_seq(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {
 
   // Step 1 (only done once in the first complete run): 
   //   Get the break point vectors based on max_parallelism
@@ -1891,7 +1909,7 @@ void Graph::run_graph_incre_partition_seq(size_t matrix_size, size_t cur_paralle
   auto start = std::chrono::steady_clock::now();
   _executor.run(_taskflow).wait();
   auto end = std::chrono::steady_clock::now();
-  _incre_pasta_taskflow_runtime += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  _pasta_taskflow_runtime += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
 
   // Step 7:
   //   Remove all the extra dependencies from taskflow to ensure a clean state for next iteration

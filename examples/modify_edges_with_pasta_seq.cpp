@@ -59,7 +59,7 @@ int main(int argc, char* argv[]) {
     // std::cout << "|------------ running " << count + 1 << " th iteration. -------------------|\n";
 
     // run with current setting
-    graph.run_graph_incre_partition_seq(matrix_size, num_streams, max_parallelism);
+    graph.run_graph_pasta_partition_seq(matrix_size, num_streams, max_parallelism);
 
     // get N random numbers
     std::vector<int> random_edges = generate_random_nums(graph.num_edges(), N, gen);
@@ -91,7 +91,7 @@ int main(int argc, char* argv[]) {
 
   std::cout << "avg critical path length (seq pasta): " 
             << static_cast<double>(graph.get_critical_path_length_constrained()) / num_incre_itr << "\n";
-  std::cout << "taskflow runtime(seq pasta): " << graph.get_incre_pasta_taskflow_runtime() << " us\n"; 
+  std::cout << "taskflow runtime(seq pasta): " << graph.get_pasta_taskflow_runtime() << " us\n"; 
 
   return 0;
 }

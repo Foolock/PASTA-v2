@@ -77,13 +77,13 @@ int main() {
 
   // graph.remove_random_edges(5, gen, mode);
 
-  graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
+  graph.run_graph_pasta_partition(matrix_size, 2, max_parallelism);
 
   graph.add_backward_edge(); 
   std::cout << "Original graph after adding edges\n";
   graph.dump_graph();
 
-  graph.run_graph_incre_partition(matrix_size, 2, max_parallelism);
+  graph.run_graph_pasta_partition(matrix_size, 2, max_parallelism);
 }
 
 
