@@ -248,6 +248,8 @@ class Graph {
     // max_parallelism is the maximum potential parallelism
     void run_graph_pasta_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
     void run_graph_pasta_partition_seq(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
+    // for this version of pasta, we redo DFS in each iteration to obtain better taskflow runtime (shorten critical path)
+    void run_graph_pasta_partition_update(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
 
     bool process_backward_edges(); // process backward edges based on std::list
     bool process_backward_edges_taskflow(); // process backward edges based on node class

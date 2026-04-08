@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
 
   size_t N = num_incre_ops;
 
-  size_t num_incre_itr = 100; // we will have totally 1k incremental iterations
+  size_t num_incre_itr = 1000; // we will have totally 1k incremental iterations
 
   size_t count = 0;
 
@@ -89,10 +89,10 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
-  // std::cout << "avg critical path length (original): " 
-  //           << static_cast<double>(graph.get_critical_path_length_original()) / num_incre_itr << "\n";
-  // std::cout << "avg critical path length (pasta): " 
-  //           << static_cast<double>(graph.get_critical_path_length_constrained()) / num_incre_itr << "\n";
+  std::cout << "avg critical path length (original): " 
+            << static_cast<double>(graph.get_critical_path_length_original()) / num_incre_itr << "\n";
+  std::cout << "avg critical path length (pasta): " 
+            << static_cast<double>(graph.get_critical_path_length_constrained()) / num_incre_itr << "\n";
   std::cout << "partitioning runtime (pasta): " << graph.get_pasta_partitioning_runtime() << " us\n"; 
   std::cout << "taskflow buildtime (pasta): " << graph.get_pasta_taskflow_buildtime() << " us\n"; 
   std::cout << "taskflow runtime (pasta): " << graph.get_pasta_taskflow_runtime() << " us\n"; 
