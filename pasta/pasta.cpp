@@ -1083,12 +1083,12 @@ void Graph::partition_cudaflow(size_t num_streams) {
 
   // get level list 
   // assign lid to each node
+  auto start = std::chrono::steady_clock::now();
   std::vector<std::vector<Node*>> level_list = _get_level_list(); 
 
   // use list to store nodes for each stream
   std::vector<std::list<Node*>> streams(num_streams);
 
-  auto start = std::chrono::steady_clock::now();
   for(auto& level : level_list) {
     for(auto node : level) {
       int stream_id_cur = (node->_lid) % num_streams; 
@@ -1865,6 +1865,94 @@ void Graph::run_graph_pasta_partition(size_t matrix_size, size_t cur_parallelism
   buildtaskflow_end = std::chrono::steady_clock::now();
   _pasta_taskflow_buildtime += std::chrono::duration_cast<std::chrono::microseconds>(buildtaskflow_end-buildtaskflow_start).count();
 }
+
+void Graph::run_graph_pasta_partition_full(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {
+
+  auto partition_start = std::chrono::steady_clock::now();
+
+  // Step 1:
+  //   Get a topological sequence by DFS
+  std::vector<Node*> topo_dfs = _get_topo_order_dfs();   
+
+  // Step 2:
+  //   Build breakable nodes based on the latest DFS topological sequence 
+  //   std::pair<Node*, next_node_index in topo_dfs>
+  std::vector<std::pair<Node*, int>> breakable_nodes;
+  for(size_t i=0; i<topo_dfs.size()-1; i++) {
+    Node* u = topo_dfs[i];
+    Node* v = topo_dfs[i+1];
+
+    // Check if u->v in the sequence is a breakable edge. (so u is a breakable node)
+    // TODO: maybe just check if this node is leaf node.
+    if(!_has_original_edge(u, v)) {
+      breakable_nodes.push_back(std::make_pair(u, i+1));
+    }
+  }
+
+  // Step 3:
+  //   Select the breakable nodes from breakable_nodes based on cur_parallelism
+  std::vector<std::pair<Node*, int>> selected;
+  if(breakable_nodes.size() > 0) {
+    size_t achievable = 1 + breakable_nodes.size();
+    cur_parallelism = std::min(cur_parallelism, achievable);
+    for(size_t i = 1; i < cur_parallelism; ++i) {
+      size_t j = (i * breakable_nodes.size()) / cur_parallelism;
+
+      // selected.push_back(breakable_nodes[j]);
+      while(j < breakable_nodes.size() && !breakable_nodes[j].first->_fanouts.empty()) {
+        ++j;
+      }
+
+      if(j < breakable_nodes.size()) {
+        selected.push_back(breakable_nodes[j]);
+      }
+    }
+  }
+
+  auto partition_end = std::chrono::steady_clock::now();
+  _pasta_partitioning_runtime += std::chrono::duration_cast<std::chrono::microseconds>(partition_end-partition_start).count();
+
+  _num_breakable_nodes += breakable_nodes.size();
+  _num_selected_breakable_nodes += selected.size();
+
+  _critical_path_length_original += _get_critical_path_length_taskflow();
+
+  auto buildtaskflow_start = std::chrono::steady_clock::now();
+
+  // Step 4: 
+  //   Make Taskflow linear chain with the latest breakable_nodes
+  //   Notice: if breakable_nodes is constructed by leaf nodes, then connect breakable_nodes does not make linear chain
+  for(size_t i=0; i<breakable_nodes.size(); i++) {
+    breakable_nodes[i].first->_task.precede(topo_dfs[breakable_nodes[i].second]->_task);
+  }
+
+  // Step 5:
+  //   Break Taskflow linear chain based on selected breakable nodes
+  for(size_t i=0; i<selected.size(); i++) {
+    selected[i].first->_task.remove_successors(topo_dfs[selected[i].second]->_task);
+  }
+
+  auto buildtaskflow_end = std::chrono::steady_clock::now();
+  _pasta_taskflow_buildtime += std::chrono::duration_cast<std::chrono::microseconds>(buildtaskflow_end-buildtaskflow_start).count();
+
+  _critical_path_length_constrained += _get_critical_path_length_taskflow();
+
+  // Step 6:
+  //   Run taskflow
+  auto start = std::chrono::steady_clock::now();
+  _executor.run(_taskflow).wait();
+  auto end = std::chrono::steady_clock::now();
+  _pasta_taskflow_runtime += std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+
+  buildtaskflow_start = std::chrono::steady_clock::now();
+  // Step 7:
+  //   Remove all the extra dependencies from taskflow to ensure a clean state for next iteration
+  for(size_t i=0; i<breakable_nodes.size(); i++) {
+    breakable_nodes[i].first->_task.remove_successors(topo_dfs[breakable_nodes[i].second]->_task);
+  }
+  buildtaskflow_end = std::chrono::steady_clock::now();
+  _pasta_taskflow_buildtime += std::chrono::duration_cast<std::chrono::microseconds>(buildtaskflow_end-buildtaskflow_start).count();
+}  
 
 void Graph::run_graph_pasta_partition_seq(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism) {
 

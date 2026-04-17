@@ -7,6 +7,7 @@
 #include <set>
 #include "taskflow/taskflow.hpp"
 #include "wsq.hpp"
+#include <utility>
 
 namespace pasta {
 
@@ -219,6 +220,12 @@ class Graph {
     inline size_t get_pasta_taskflow_buildtime() const {
       return _pasta_taskflow_buildtime;
     }
+    inline size_t get_num_breakable_nodes() const {
+      return _num_breakable_nodes;
+    }
+    inline size_t get_num_selected_breakable_nodes() const {
+      return _num_selected_breakable_nodes;
+    }
     void test_func();
 
     // check cycle
@@ -249,7 +256,8 @@ class Graph {
     void run_graph_pasta_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
     void run_graph_pasta_partition_seq(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
     // for this version of pasta, we redo DFS in each iteration to obtain better taskflow runtime (shorten critical path)
-    void run_graph_pasta_partition_update(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
+    // ctest case not ready
+    void run_graph_pasta_partition_full(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
 
     bool process_backward_edges(); // process backward edges based on std::list
     bool process_backward_edges_taskflow(); // process backward edges based on node class
@@ -378,6 +386,8 @@ class Graph {
     size_t _pasta_taskflow_runtime = 0;
     size_t _critical_path_length_original = 0;
     size_t _critical_path_length_constrained = 0;
+    size_t _num_breakable_nodes;
+    size_t _num_selected_breakable_nodes;
 
     tf::Taskflow _taskflow;
     tf::Executor _executor{std::thread::hardware_concurrency()};
