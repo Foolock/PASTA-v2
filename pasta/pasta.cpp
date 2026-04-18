@@ -122,6 +122,7 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
   _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
   _pasta_taskflow_buildtime += taskflow_constucttime;
+  _cudaflow_taskflow_buildtime += taskflow_constucttime;
 
   return node_ptr;
 }
@@ -175,6 +176,7 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode) {
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
   _pasta_taskflow_buildtime += taskflow_constucttime;
+  _cudaflow_taskflow_buildtime += taskflow_constucttime;
 
   // check if this is a backward edge by comparing _pos
   if(from->_pos > to->_pos) {
@@ -207,6 +209,7 @@ void Graph::remove_node(Node* node, RunMode mode) {
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
   _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
   _pasta_taskflow_buildtime += taskflow_constucttime;
+  _cudaflow_taskflow_buildtime += taskflow_constucttime;
 
   _nodes.erase(node->_node_satellite);
 }
@@ -262,6 +265,7 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
   _incre_runtime_with_semaphore_graph_construct += taskflow_constucttime;
   _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
   _pasta_taskflow_buildtime += taskflow_constucttime;
+  _cudaflow_taskflow_buildtime += taskflow_constucttime;
 
   _edges.erase(edge->_satellite);
 }
@@ -1273,12 +1277,21 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
 
 void Graph::run_graph_cudaflow_partition_update(size_t num_streams) { // num_streams = max_parallelism
 
+  auto start_level_list = std::chrono::steady_clock::now();
   /* Step 1: Rebuild level list */
   _get_level_list_for_cudaflow();
+  auto end_level_list = std::chrono::steady_clock::now();
+  size_t level_list_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_level_list-start_level_list).count();
+  _cudaflow_find_level_list_runtime += level_list_runtime; 
 
+  auto start_assign_streams = std::chrono::steady_clock::now();
   /* Step 2: Assign nodes to streams level by level */
   std::vector<std::vector<Node*>> node_streams = _assign_nodes_to_streams(num_streams); 
+  auto end_assign_streams = std::chrono::steady_clock::now();
+  size_t assign_streams_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_assign_streams-start_assign_streams).count();
+  _cudaflow_assign_streams_runtime += assign_streams_runtime;
 
+  auto start_build_taskflow = std::chrono::steady_clock::now();
   /* Step 3: Add extra dependencies to Taskflow based on node_streams */
   std::vector<std::pair<Node*, Node*>> added_extra_edges;
   added_extra_edges.reserve(_nodes.size());
@@ -1298,14 +1311,27 @@ void Graph::run_graph_cudaflow_partition_update(size_t num_streams) { // num_str
       }
     }
   }
+  auto end_build_taskflow = std::chrono::steady_clock::now();
+  size_t construct_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_build_taskflow-start_build_taskflow).count();
+  _cudaflow_taskflow_buildtime += construct_runtime;
 
+  _critical_path_length_constrained += _get_critical_path_length_taskflow();
+
+  auto start_run_taskflow = std::chrono::steady_clock::now();
   /* Step 4: Run Taskflow */
   _executor.run(_taskflow).wait();
+  auto end_run_taskflow = std::chrono::steady_clock::now();
+  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_run_taskflow-start_run_taskflow).count();
+  _incre_runtime_with_cudaflow_partition += taskflow_runtime;
 
+  start_build_taskflow = std::chrono::steady_clock::now();
   /* Step 5: Recover Taskflow for next iteration */
   for(const auto& [from, to] : added_extra_edges) {
     from->_task.remove_successors(to->_task);
   }
+  end_build_taskflow = std::chrono::steady_clock::now();
+  construct_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_build_taskflow-start_build_taskflow).count();
+  _cudaflow_taskflow_buildtime += construct_runtime;
 
 }
 

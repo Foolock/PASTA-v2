@@ -11,6 +11,7 @@ set(PASTA_EXAMPLES
   modify_edges_with_pasta_full 
   modify_edges_with_pasta_seq
   modify_edges_with_cudaflow 
+  modify_edges_with_cudaflow_update 
   mis
   cudaflow_partition
   semaphore
