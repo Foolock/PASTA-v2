@@ -43,7 +43,7 @@ int main(int argc, char* argv[]) {
 
   size_t N = num_incre_ops;
 
-  size_t num_incre_itr = 1000; // we will have totally 1k incremental iterations
+  size_t num_incre_itr = 100; // we will have totally 1k incremental iterations
 
   size_t count = 0;
 
@@ -94,6 +94,8 @@ int main(int argc, char* argv[]) {
   std::cout << "avg critical path length (cudaflow): " 
             << static_cast<double>(graph.get_critical_path_length_constrained()) / num_incre_itr << "\n";
   std::cout << "partitioning runtime (cudaflow): " << graph.get_cudaflow_partitioning_runtime() << " us\n"; 
+  std::cout << "find level list runtime (cudaflow): " << graph.get_cudaflow_find_level_list_runtime() << " us\n"; 
+  std::cout << "assign streams runtime (cudaflow): " << graph.get_cudaflow_assign_streams_runtime() << " us\n"; 
   std::cout << "taskflow buildtime (cudaflow): " << graph.get_cudaflow_taskflow_buildtime() << " us\n"; 
   std::cout << "taskflow runtime (cudaflow): " << graph.get_incre_runtime_with_cudaflow_partition() << " us\n"; 
   return 0;

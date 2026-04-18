@@ -92,6 +92,7 @@ class Node {
     bool _linked_to_is_actual = false;
     std::set<Node*> _fanout_set; // to quickly identify if v is a fanout of u
 
+    size_t _num_fanins = 0;
 };
 
 class Edge {
@@ -211,6 +212,12 @@ class Graph {
     inline size_t get_cudaflow_partitioning_runtime() const {
       return _cudaflow_partitioning_runtime;
     }
+    inline size_t get_cudaflow_find_level_list_runtime() const {
+      return _cudaflow_find_level_list_runtime;
+    }
+    inline size_t get_cudaflow_assign_streams_runtime() const {
+      return _cudaflow_assign_streams_runtime;
+    }
     inline size_t get_pasta_partitioning_runtime() const {
       return _pasta_partitioning_runtime;
     }
@@ -251,6 +258,10 @@ class Graph {
     void run_graph_after_partition(size_t matrix_size);
     void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
+    /* For this version of cudaflow, we try to improve the runtime of assigning streams first, then see 
+       try to incrementally update level list, then incrementally apply changes to Taskflow   
+    */
+    void run_graph_cudaflow_partition_update(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
     // cur_parallelism is the parallelism limit for current iteration
     // max_parallelism is the maximum potential parallelism
     void run_graph_pasta_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
@@ -307,6 +318,22 @@ class Graph {
     // _breakable_nodes[i] is the last node of one segments.
     // _breakable_nodes.size() = maximum potential parallelism - 1
     std::vector<Node*> _breakable_nodes;
+
+    /*
+      --------- For cudaflow partitioning -------------
+    */
+    std::list<std::list<Node*>> _level_list;
+
+    // filling up _level_list for cudaflow 
+    void _get_level_list_for_cudaflow();
+
+    // assign nodes to streams level by level
+    std::vector<std::vector<Node*>> _assign_nodes_to_streams(size_t num_streams);
+
+    /*
+      -------------------------------------------------
+    */
+    
 
     // get level list of current graph 
     std::vector<std::vector<Node*>> _get_level_list();
@@ -376,6 +403,8 @@ class Graph {
     // cudaflow partitioning.
     // Apply full partitioning (topological sort) for each incremental iteration 
     size_t _cudaflow_partitioning_runtime = 0;
+    size_t _cudaflow_find_level_list_runtime = 0;
+    size_t _cudaflow_assign_streams_runtime = 0;
     size_t _cudaflow_taskflow_buildtime = 0;
     size_t _cudaflow_taskflow_runtime = 0;
 

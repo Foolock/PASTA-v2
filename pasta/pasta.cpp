@@ -857,6 +857,7 @@ void Graph::run_graph_semaphore(size_t matrix_size, size_t num_semaphore) {
 }
 
 void Graph::dump_graph() {
+
   // Create a local Taskflow object for dumping
   tf::Taskflow local_taskflow;
 
@@ -1084,11 +1085,16 @@ void Graph::partition_cudaflow(size_t num_streams) {
   // get level list 
   // assign lid to each node
   auto start = std::chrono::steady_clock::now();
+  auto start_level_list = std::chrono::steady_clock::now();
   std::vector<std::vector<Node*>> level_list = _get_level_list(); 
+  auto end_level_list = std::chrono::steady_clock::now();
+  size_t level_list_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_level_list-start_level_list).count();
+  _cudaflow_find_level_list_runtime += level_list_runtime; 
 
   // use list to store nodes for each stream
   std::vector<std::list<Node*>> streams(num_streams);
 
+  auto start_assign_streams = std::chrono::steady_clock::now();
   for(auto& level : level_list) {
     for(auto node : level) {
       int stream_id_cur = (node->_lid) % num_streams; 
@@ -1132,6 +1138,9 @@ void Graph::partition_cudaflow(size_t num_streams) {
       }
     }
   }
+  auto end_assign_streams = std::chrono::steady_clock::now();
+  size_t assign_streams_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_assign_streams-start_assign_streams).count();
+  _cudaflow_assign_streams_runtime += assign_streams_runtime;
 
   auto end = std::chrono::steady_clock::now();
   size_t partition_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
@@ -1260,6 +1269,125 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
   size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
   _incre_runtime_with_cudaflow_partition += taskflow_runtime;
 
+}
+
+void Graph::run_graph_cudaflow_partition_update(size_t matrix_size, size_t num_streams) { // num_streams = max_parallelism
+
+  /* Step 1: Rebuild level list */
+  _get_level_list_for_cudaflow();
+  std::cout << "\nlevel list: \n";
+  int level_id = 0;
+  for(const auto& level : _level_list) {
+    std::cout << "Level " << level_id++ << ": ";
+    for(const Node* node : level) {
+      std::cout << node->_name << " ";
+    }
+    std::cout << "\n";
+  }
+  std::cout << "\n";
+
+  /* Step 2: Assign nodes to streams level by level */
+  std::vector<std::vector<Node*>> node_streams = _assign_nodes_to_streams(num_streams); 
+  std::cout << "\nnode streams: \n";
+  int stream_id = 0;
+  for(const auto& stream : node_streams) {
+    std::cout << "Stream " << stream_id++ << ": ";
+    for(const Node* node : stream) {
+      std::cout << node->_name << " ";
+    }
+    std::cout << "\n";
+  }
+  std::cout << "\n";
+
+  /* Step 3: Add extra dependencies to Taskflow based on node_streams */
+  std::vector<std::pair<Node*, Node*>> added_extra_edges;
+  added_extra_edges.reserve(_nodes.size());
+
+  for(const auto& stream : node_streams) {
+    if(stream.size() <= 1) {
+      continue;
+    }
+    auto it = stream.begin();
+    auto next = std::next(it);
+    for(; next != stream.end(); ++it, ++next) {
+      Node* from = *it;
+      Node* to = *next;
+      if(!_has_original_edge(from, to)) {
+        from->_task.precede(to->_task);
+        added_extra_edges.emplace_back(from, to);
+      }
+    }
+  }
+  std::cout << "Added extra edges:\n";
+  for(const auto& [from, to] : added_extra_edges) {
+    std::cout << from->_name << " -> " << to->_name << "\n";
+  }
+  _taskflow.dump(std::cout);
+
+  /* Step 4: Run Taskflow */
+  _executor.run(_taskflow).wait();
+
+  /* Step 5: Recover Taskflow for next iteration */
+  for(const auto& [from, to] : added_extra_edges) {
+    from->_task.remove_successors(to->_task);
+  }
+  _taskflow.dump(std::cout);
+
+}
+
+void Graph::_get_level_list_for_cudaflow() {
+  _level_list.clear();
+
+  // Initialize working indegree counter on each node.
+  // _num_fanins is a dedicated scratch field for this function.
+  std::queue<Node*> q;
+  for (auto& node : _nodes) {
+    Node* n = &node;
+    n->_num_fanins = n->_fanins.size();
+    if (n->_num_fanins == 0) q.push(n);
+  }
+
+  size_t visited = 0;
+  while (!q.empty()) {
+    size_t level_size = q.size();
+    _level_list.emplace_back();
+    auto& cur_level = _level_list.back();
+    int lid = 0; // Node's index at current level
+    for (size_t i = 0; i < level_size; ++i) {
+      Node* cur = q.front(); q.pop();
+      cur->_lid = lid++;
+      cur_level.push_back(cur);
+      ++visited;
+      for (Edge* e : cur->_fanouts) {
+        Node* succ = e->_to;
+        if (--succ->_num_fanins == 0) {
+          q.push(succ);
+        }
+      }
+    }
+  }
+
+  if (visited != _nodes.size()) {
+    throw std::runtime_error("Graph has a cycle in get_level_list_for_cudaflow");
+  }
+}
+
+std::vector<std::vector<Node*>> Graph::_assign_nodes_to_streams(size_t num_streams) {
+
+  if(num_streams == 0) {
+    throw std::runtime_error("num_streams cannot be 0");
+  }
+
+  std::vector<std::vector<Node*>> streams(num_streams);
+
+  for(auto& level : _level_list) {
+    for(Node* node : level) {
+      size_t stream_id = static_cast<size_t>(node->_lid) % num_streams;
+      streams[stream_id].push_back(node);
+    }
+  }
+
+  return streams; 
 }
 
 bool Graph::is_cudaflow_satisfy_parallelism(size_t cur_parallelism) {
