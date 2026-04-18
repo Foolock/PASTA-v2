@@ -43,7 +43,7 @@ int main(int argc, char* argv[]) {
 
   size_t N = num_incre_ops;
 
-  size_t num_incre_itr = 100; // we will have totally 1k incremental iterations
+  size_t num_incre_itr = 1000; // we will have totally 1k incremental iterations
 
   size_t count = 0;
 

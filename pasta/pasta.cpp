@@ -113,8 +113,10 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
         }
       }
     }).name(node_ptr->_name);
-    node_ptr->_task.acquire(_semaphore);
-    node_ptr->_task.release(_semaphore);
+    if(mode == RunMode::Semaphore) {
+      node_ptr->_task.acquire(_semaphore);
+      node_ptr->_task.release(_semaphore);
+    }
   }
   auto end_construct = std::chrono::steady_clock::now();
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
