@@ -14,7 +14,7 @@ int main() {
   std::cout << "num_nodes: " << graph.num_nodes() << "\n";
   std::cout << "num_edges: " << graph.num_edges() << "\n";
 
-  graph.run_graph_cudaflow_partition_update(1, 2);
+  graph.run_graph_cudaflow_partition_update(2);
 
 }
 

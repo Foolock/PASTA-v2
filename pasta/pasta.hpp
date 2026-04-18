@@ -261,7 +261,7 @@ class Graph {
     /* For this version of cudaflow, we try to improve the runtime of assigning streams first, then see 
        try to incrementally update level list, then incrementally apply changes to Taskflow   
     */
-    void run_graph_cudaflow_partition_update(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
+    void run_graph_cudaflow_partition_update(size_t num_streams); // num_streams = max_parallelism
     // cur_parallelism is the parallelism limit for current iteration
     // max_parallelism is the maximum potential parallelism
     void run_graph_pasta_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
@@ -281,6 +281,9 @@ class Graph {
     void print_topo_order() const;
     void add_backward_edge();
     void remove_actual_edge();
+
+    // helper: verify run_graph_cudaflow_partition_update()
+    bool verify_cudaflow_partition_update(size_t num_streams);
 
     // helper: verify Taskflow consistency with my graph object
     bool is_taskflow_topo_consistent();
@@ -333,7 +336,10 @@ class Graph {
     /*
       -------------------------------------------------
     */
-    
+
+    bool _is_taskflow_acyclic(); 
+
+    bool _check_cudaflow_partition_update(size_t num_streams); 
 
     // get level list of current graph 
     std::vector<std::vector<Node*>> _get_level_list();

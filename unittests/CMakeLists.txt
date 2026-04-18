@@ -5,8 +5,9 @@ include(${PASTA_3RD_PARTY_DIR}/doctest/doctest.cmake)
 list(APPEND PASTA_UNITTESTS
   # check_cudaflow_partition
   # check_process_backward_edge
-  check_modify_edges_pasta
+  # check_modify_edges_pasta
   # check_modify_edges_cudaflow
+  check_modify_edges_cudaflow_update
 )
 
 string(FIND '${CMAKE_CXX_FLAGS}' "-fsanitize" sanitize)

@@ -1271,33 +1271,13 @@ void Graph::run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams)
 
 }
 
-void Graph::run_graph_cudaflow_partition_update(size_t matrix_size, size_t num_streams) { // num_streams = max_parallelism
+void Graph::run_graph_cudaflow_partition_update(size_t num_streams) { // num_streams = max_parallelism
 
   /* Step 1: Rebuild level list */
   _get_level_list_for_cudaflow();
-  std::cout << "\nlevel list: \n";
-  int level_id = 0;
-  for(const auto& level : _level_list) {
-    std::cout << "Level " << level_id++ << ": ";
-    for(const Node* node : level) {
-      std::cout << node->_name << " ";
-    }
-    std::cout << "\n";
-  }
-  std::cout << "\n";
 
   /* Step 2: Assign nodes to streams level by level */
   std::vector<std::vector<Node*>> node_streams = _assign_nodes_to_streams(num_streams); 
-  std::cout << "\nnode streams: \n";
-  int stream_id = 0;
-  for(const auto& stream : node_streams) {
-    std::cout << "Stream " << stream_id++ << ": ";
-    for(const Node* node : stream) {
-      std::cout << node->_name << " ";
-    }
-    std::cout << "\n";
-  }
-  std::cout << "\n";
 
   /* Step 3: Add extra dependencies to Taskflow based on node_streams */
   std::vector<std::pair<Node*, Node*>> added_extra_edges;
@@ -1318,11 +1298,6 @@ void Graph::run_graph_cudaflow_partition_update(size_t matrix_size, size_t num_s
       }
     }
   }
-  std::cout << "Added extra edges:\n";
-  for(const auto& [from, to] : added_extra_edges) {
-    std::cout << from->_name << " -> " << to->_name << "\n";
-  }
-  _taskflow.dump(std::cout);
 
   /* Step 4: Run Taskflow */
   _executor.run(_taskflow).wait();
@@ -1331,7 +1306,6 @@ void Graph::run_graph_cudaflow_partition_update(size_t matrix_size, size_t num_s
   for(const auto& [from, to] : added_extra_edges) {
     from->_task.remove_successors(to->_task);
   }
-  _taskflow.dump(std::cout);
 
 }
 
@@ -1388,6 +1362,87 @@ std::vector<std::vector<Node*>> Graph::_assign_nodes_to_streams(size_t num_strea
   }
 
   return streams; 
+}
+
+bool Graph::verify_cudaflow_partition_update(size_t num_streams) {
+
+  /* Step 1: Rebuild level list */
+  _get_level_list_for_cudaflow();
+
+  /* Step 2: Assign nodes to streams */
+  std::vector<std::vector<Node*>> node_streams = _assign_nodes_to_streams(num_streams);
+
+  /* Step 3: Add extra dependencies */
+  std::vector<std::pair<Node*, Node*>> added_extra_edges;
+  added_extra_edges.reserve(_nodes.size());
+
+  for(const auto& stream : node_streams) {
+    if(stream.size() <= 1) {
+      continue;
+    }
+
+    auto it = stream.begin();
+    auto next = std::next(it);
+
+    for(; next != stream.end(); ++it, ++next) {
+      Node* from = *it;
+      Node* to = *next;
+
+      if(!_has_original_edge(from, to)) {
+        from->_task.precede(to->_task);
+        added_extra_edges.emplace_back(from, to);
+      }
+    }
+  }
+
+  /* Step 4: Check correctness */
+  bool ok = true;
+
+  try {
+    auto levels = _get_taskflow_level_list();
+
+    size_t max_parallelism = 0;
+    for(const auto& level : levels) {
+      max_parallelism = std::max(max_parallelism, level.size());
+    }
+
+    if(max_parallelism > num_streams) {
+      ok = false;
+    }
+  }
+  catch(...) {
+    ok = false;
+  }
+
+  /* Step 5: Recover Taskflow */
+  for(const auto& [from, to] : added_extra_edges) {
+    from->_task.remove_successors(to->_task);
+  }
+
+  return ok;
+}
+
+bool Graph::_is_taskflow_acyclic() {
+  try {
+    auto levels = _get_taskflow_level_list();
+    (void)levels;
+    return true;
+  }
+  catch(...) {
+    return false;
+  }
+}
+
+bool Graph::_check_cudaflow_partition_update(size_t num_streams) {
+  if(!_is_taskflow_acyclic()) {
+    return false;
+  }
+
+  if(_get_max_parallelism_taskflow() > num_streams) {
+    return false;
+  }
+
+  return true;
 }
 
 bool Graph::is_cudaflow_satisfy_parallelism(size_t cur_parallelism) {
