@@ -25,7 +25,7 @@ std::vector<int> generate_random_nums(
 int main(int argc, char* argv[]) {
 
   if(argc != 4) {
-    std::cerr << "usage: ./example/incre matrix_size num_incre_ops circuit_file\n";
+    std::cerr << "usage: ./example/modify_edges_with_taskflow matrix_size num_incre_ops circuit_file\n";
     std::exit(EXIT_FAILURE);
   }
 
@@ -33,7 +33,9 @@ int main(int argc, char* argv[]) {
   int num_incre_ops = std::atoi(argv[2]);
   std::string circuit_file = argv[3];
 
-  pasta::Graph graph(circuit_file); 
+  pasta::RunMode mode = pasta::RunMode::IncrementalPartition;
+
+  pasta::Graph graph(circuit_file, mode, matrix_size); 
 
   int max_parallelism = 8;
 
@@ -47,21 +49,17 @@ int main(int argc, char* argv[]) {
 
   size_t count = 0;
 
+  std::mt19937 gen(42);
+
   int num_streams = max_parallelism; // start at 8
   int dir = -1;                          // going down first: 8->7->...->1
 
-  std::mt19937 gen(42);
-
-  pasta::RunMode mode = pasta::RunMode::Partition;
-
   while (count < num_incre_itr) {
 
-    // std::cout << "---------------------\n";
-    // std::cout << "running " << count + 1 << " th incremental iteration.\n";
-    // std::cout << "---------------------\n";
+    // std::cout << "|------------ running " << count + 1 << " th iteration. -------------------|\n";
 
-    // run with current semaphore setting
-    graph.run_graph_cudaflow_partition(matrix_size, num_streams);
+    // run with current setting
+    graph.run_graph_cudaflow_partition_update_incre(num_streams);
 
     // get N random numbers
     std::vector<int> random_edges = generate_random_nums(graph.num_edges(), N, gen);
@@ -93,11 +91,12 @@ int main(int argc, char* argv[]) {
 
   std::cout << "avg critical path length (cudaflow): " 
             << static_cast<double>(graph.get_critical_path_length_constrained()) / num_incre_itr << "\n";
-  std::cout << "partitioning runtime (cudaflow): " << graph.get_cudaflow_partitioning_runtime() << " us\n"; 
-  std::cout << "rebuild level list runtime (cudaflow): " << graph.get_cudaflow_rebuild_level_list_runtime() << " us\n"; 
+  std::cout << "incremental level list runtime (cudaflow): " << graph.get_cudaflow_incre_level_list_runtime() << " us\n"; 
   std::cout << "assign streams runtime (cudaflow): " << graph.get_cudaflow_assign_streams_runtime() << " us\n"; 
   std::cout << "taskflow buildtime (cudaflow): " << graph.get_cudaflow_taskflow_buildtime() << " us\n"; 
   std::cout << "taskflow runtime (cudaflow): " << graph.get_incre_runtime_with_cudaflow_partition() << " us\n"; 
+ 
+
   return 0;
 }
 

@@ -7,7 +7,8 @@ list(APPEND PASTA_UNITTESTS
   # check_process_backward_edge
   # check_modify_edges_pasta
   # check_modify_edges_cudaflow
-  check_modify_edges_cudaflow_update
+  # check_modify_edges_cudaflow_update
+  check_modify_edges_cudaflow_update_incre
 )
 
 string(FIND '${CMAKE_CXX_FLAGS}' "-fsanitize" sanitize)

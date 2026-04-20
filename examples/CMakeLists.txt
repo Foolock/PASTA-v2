@@ -8,10 +8,12 @@ set(PASTA_EXAMPLES
   incre_cudaflow_partition 
   modify_edges
   modify_edges_with_pasta 
+  modify_edges_with_pasta_round_robin 
   modify_edges_with_pasta_full 
   modify_edges_with_pasta_seq
   modify_edges_with_cudaflow 
   modify_edges_with_cudaflow_update 
+  modify_edges_with_cudaflow_update_incre 
   mis
   cudaflow_partition
   semaphore

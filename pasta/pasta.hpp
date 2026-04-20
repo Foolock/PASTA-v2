@@ -93,6 +93,9 @@ class Node {
     std::set<Node*> _fanout_set; // to quickly identify if v is a fanout of u
 
     size_t _num_fanins = 0;
+
+    /* Indicate the node location within one level in _level_list */
+    std::list<Node*>::iterator _level_it;
 };
 
 class Edge {
@@ -212,8 +215,11 @@ class Graph {
     inline size_t get_cudaflow_partitioning_runtime() const {
       return _cudaflow_partitioning_runtime;
     }
-    inline size_t get_cudaflow_find_level_list_runtime() const {
-      return _cudaflow_find_level_list_runtime;
+    inline size_t get_cudaflow_rebuild_level_list_runtime() const {
+      return _cudaflow_rebuild_level_list_runtime;
+    }
+    inline size_t get_cudaflow_incre_level_list_runtime() const {
+      return _cudaflow_incre_level_list_runtime;
     }
     inline size_t get_cudaflow_assign_streams_runtime() const {
       return _cudaflow_assign_streams_runtime;
@@ -262,6 +268,8 @@ class Graph {
        try to incrementally update level list, then incrementally apply changes to Taskflow   
     */
     void run_graph_cudaflow_partition_update(size_t num_streams); // num_streams = max_parallelism
+    /* Now apply incremental update for level list */
+    void run_graph_cudaflow_partition_update_incre(size_t num_streams); // num_streams = max_parallelism
     // cur_parallelism is the parallelism limit for current iteration
     // max_parallelism is the maximum potential parallelism
     void run_graph_pasta_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
@@ -269,9 +277,13 @@ class Graph {
     // for this version of pasta, we redo DFS in each iteration to obtain better taskflow runtime (shorten critical path)
     // ctest case not ready
     void run_graph_pasta_partition_full(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
+    /* For this version of pasta, we incrementally maintain a topological order and assign nodes to streams in a round robin fashion.
+       We need to generate _topo_nodes using BFS in this version.
+    */
+    void run_graph_pasta_partition_round_robin(size_t cur_parallelism);  
 
     bool process_backward_edges(); // process backward edges based on std::list
-    bool process_backward_edges_taskflow(); // process backward edges based on node class
+    bool process_backward_edges_taskflow(bool use_round_robin = false); // process backward edges based on node class
 
     void generate_topo_order();
 
@@ -284,6 +296,9 @@ class Graph {
 
     // helper: verify run_graph_cudaflow_partition_update()
     bool verify_cudaflow_partition_update(size_t num_streams);
+
+    // helper: verify run_graph_cudaflow_partition_update_incre()
+    bool verify_cudaflow_partition_update_incre(size_t num_streams);
 
     // helper: verify Taskflow consistency with my graph object
     bool is_taskflow_topo_consistent();
@@ -325,13 +340,30 @@ class Graph {
     /*
       --------- For cudaflow partitioning -------------
     */
-    std::list<std::list<Node*>> _level_list;
+    std::vector<std::list<Node*>> _level_list;
+
+    // Scratch buffer for _assign_nodes_to_streams. Hoisted to a member so capacity
+    // is retained across iterations, avoiding repeated heap allocations.
+    std::vector<std::vector<Node*>> _node_streams_scratch;
 
     // filling up _level_list for cudaflow 
     void _get_level_list_for_cudaflow();
 
     // assign nodes to streams level by level
-    std::vector<std::vector<Node*>> _assign_nodes_to_streams(size_t num_streams);
+    void _assign_nodes_to_streams(size_t num_streams);
+
+    // ensure _level_list has at least (k+1) levels
+    void _ensure_level_exists(size_t k);
+
+    // place node n at level k (assumes _level stale, _level_it may be stale; overwrites both)
+    void _place_node_at_level(Node* n, int k);
+
+    // recompute L(n) from current fanins
+    int _recompute_level(Node* n) const;
+
+    // incremental updaters to call from insert_edge/remove_edge
+    void _incre_level_on_insert_edge(Node* u, Node* v);
+    void _incre_level_on_remove_edge(Node* u, Node* v);
 
     /*
       -------------------------------------------------
@@ -409,7 +441,8 @@ class Graph {
     // cudaflow partitioning.
     // Apply full partitioning (topological sort) for each incremental iteration 
     size_t _cudaflow_partitioning_runtime = 0;
-    size_t _cudaflow_find_level_list_runtime = 0;
+    size_t _cudaflow_rebuild_level_list_runtime = 0;
+    size_t _cudaflow_incre_level_list_runtime = 0;
     size_t _cudaflow_assign_streams_runtime = 0;
     size_t _cudaflow_taskflow_buildtime = 0;
     size_t _cudaflow_taskflow_runtime = 0;

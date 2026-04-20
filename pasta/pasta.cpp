@@ -54,7 +54,7 @@ Graph::Graph(const std::string& filename, RunMode mode, size_t matrix_size) {
   }
 
   // initialize topological seqenuce after constructing the graph
-  std::vector<Node*> topo = _get_topo_order_dfs(); 
+  std::vector<Node*> topo = _get_topo_order_bfs(); 
 
   // assign linked fanin/fanout based on topological sequence
   // assign pos value
@@ -78,6 +78,11 @@ Graph::Graph(const std::string& filename, RunMode mode, size_t matrix_size) {
     Node* v = *std::next(it);
     u->_linked_to = v;
     u->_linked_to_is_actual = _has_original_edge(u, v);
+  }
+
+  if(mode == RunMode::IncrementalPartition) {
+    _get_level_list_for_cudaflow();
+    // _level and _level_it are populated by the function itself now
   }
 
   _initialized = true;
@@ -180,6 +185,14 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode) {
   _pasta_taskflow_buildtime += taskflow_constucttime;
   _cudaflow_taskflow_buildtime += taskflow_constucttime;
 
+  if(_initialized && mode == RunMode::IncrementalPartition) {
+    auto s = std::chrono::steady_clock::now();
+    _incre_level_on_insert_edge(from, to);
+    auto e = std::chrono::steady_clock::now();
+    _cudaflow_incre_level_list_runtime +=
+      std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
+  }
+
   // check if this is a backward edge by comparing _pos
   if(from->_pos > to->_pos) {
     _backward_edges.push(edge_ptr);
@@ -268,6 +281,14 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
   _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
   _pasta_taskflow_buildtime += taskflow_constucttime;
   _cudaflow_taskflow_buildtime += taskflow_constucttime;
+
+  if(_initialized && mode == RunMode::IncrementalPartition) {
+    auto s = std::chrono::steady_clock::now();
+    _incre_level_on_remove_edge(from, to);
+    auto e = std::chrono::steady_clock::now();
+    _cudaflow_incre_level_list_runtime +=
+      std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
+  }
 
   _edges.erase(edge->_satellite);
 }
@@ -1095,7 +1116,7 @@ void Graph::partition_cudaflow(size_t num_streams) {
   std::vector<std::vector<Node*>> level_list = _get_level_list(); 
   auto end_level_list = std::chrono::steady_clock::now();
   size_t level_list_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_level_list-start_level_list).count();
-  _cudaflow_find_level_list_runtime += level_list_runtime; 
+  _cudaflow_rebuild_level_list_runtime += level_list_runtime; 
 
   // use list to store nodes for each stream
   std::vector<std::list<Node*>> streams(num_streams);
@@ -1284,11 +1305,11 @@ void Graph::run_graph_cudaflow_partition_update(size_t num_streams) { // num_str
   _get_level_list_for_cudaflow();
   auto end_level_list = std::chrono::steady_clock::now();
   size_t level_list_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_level_list-start_level_list).count();
-  _cudaflow_find_level_list_runtime += level_list_runtime; 
+  _cudaflow_rebuild_level_list_runtime += level_list_runtime; 
 
   auto start_assign_streams = std::chrono::steady_clock::now();
   /* Step 2: Assign nodes to streams level by level */
-  std::vector<std::vector<Node*>> node_streams = _assign_nodes_to_streams(num_streams); 
+  _assign_nodes_to_streams(num_streams); 
   auto end_assign_streams = std::chrono::steady_clock::now();
   size_t assign_streams_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_assign_streams-start_assign_streams).count();
   _cudaflow_assign_streams_runtime += assign_streams_runtime;
@@ -1298,7 +1319,7 @@ void Graph::run_graph_cudaflow_partition_update(size_t num_streams) { // num_str
   std::vector<std::pair<Node*, Node*>> added_extra_edges;
   added_extra_edges.reserve(_nodes.size());
 
-  for(const auto& stream : node_streams) {
+  for(const auto& stream : _node_streams_scratch) {
     if(stream.size() <= 1) {
       continue;
     }
@@ -1340,8 +1361,6 @@ void Graph::run_graph_cudaflow_partition_update(size_t num_streams) { // num_str
 void Graph::_get_level_list_for_cudaflow() {
   _level_list.clear();
 
-  // Initialize working indegree counter on each node.
-  // _num_fanins is a dedicated scratch field for this function.
   std::queue<Node*> q;
   for (auto& node : _nodes) {
     Node* n = &node;
@@ -1350,15 +1369,16 @@ void Graph::_get_level_list_for_cudaflow() {
   }
 
   size_t visited = 0;
+  int level_idx = 0;
   while (!q.empty()) {
     size_t level_size = q.size();
     _level_list.emplace_back();
     auto& cur_level = _level_list.back();
-    int lid = 0; // Node's index at current level
     for (size_t i = 0; i < level_size; ++i) {
       Node* cur = q.front(); q.pop();
-      cur->_lid = lid++;
       cur_level.push_back(cur);
+      cur->_level = level_idx;
+      cur->_level_it = std::prev(cur_level.end());   // <-- key addition
       ++visited;
       for (Edge* e : cur->_fanouts) {
         Node* succ = e->_to;
@@ -1367,6 +1387,7 @@ void Graph::_get_level_list_for_cudaflow() {
         }
       }
     }
+    ++level_idx;
   }
 
   if (visited != _nodes.size()) {
@@ -1374,22 +1395,57 @@ void Graph::_get_level_list_for_cudaflow() {
   }
 }
 
-std::vector<std::vector<Node*>> Graph::_assign_nodes_to_streams(size_t num_streams) {
+// void Graph::_assign_nodes_to_streams(size_t num_streams) {
+// 
+//   if(num_streams == 0) {
+//     throw std::runtime_error("num_streams cannot be 0");
+//   }
+// 
+//   std::vector<std::vector<Node*>> streams(num_streams);
+// 
+//   for(auto& level : _level_list) {
+//     int lid = 0;
+//     for(Node* node : level) {
+//       node->_lid = lid;
+//       streams[lid % num_streams].push_back(node);
+//       ++lid;
+//     }
+//   }
+// 
+//   return streams; 
+// }
+
+void Graph::_assign_nodes_to_streams(size_t num_streams) {
 
   if(num_streams == 0) {
     throw std::runtime_error("num_streams cannot be 0");
   }
 
-  std::vector<std::vector<Node*>> streams(num_streams);
+  // Resize outer vector if num_streams changed since last call.
+  // resize() only reallocates if the size grows beyond current capacity,
+  // which happens at most a few times across the whole run.
+  _node_streams_scratch.resize(num_streams);
 
-  for(auto& level : _level_list) {
-    for(Node* node : level) {
-      size_t stream_id = static_cast<size_t>(node->_lid) % num_streams;
-      streams[stream_id].push_back(node);
-    }
+  // Clear each inner vector but keep its capacity.
+  // After the first few iterations capacity stabilizes around
+  // (num_nodes / num_streams), so subsequent push_back calls
+  // never trigger reallocation.
+  for(auto& s : _node_streams_scratch) {
+    s.clear();
   }
 
-  return streams; 
+  // Round-robin-within-level assignment.
+  // Note: we deliberately do NOT write node->_lid here. The _update and
+  // _update_incre paths don't read it, and skipping the store saves one
+  // write per node. partition_cudaflow() still uses _lid, and it has its
+  // own path that writes it.
+  for(auto& level : _level_list) {
+    size_t lid = 0;
+    for(Node* node : level) {
+      _node_streams_scratch[lid % num_streams].push_back(node);
+      ++lid;
+    }
+  }
 }
 
 bool Graph::verify_cudaflow_partition_update(size_t num_streams) {
@@ -1398,13 +1454,13 @@ bool Graph::verify_cudaflow_partition_update(size_t num_streams) {
   _get_level_list_for_cudaflow();
 
   /* Step 2: Assign nodes to streams */
-  std::vector<std::vector<Node*>> node_streams = _assign_nodes_to_streams(num_streams);
+  _assign_nodes_to_streams(num_streams);
 
   /* Step 3: Add extra dependencies */
   std::vector<std::pair<Node*, Node*>> added_extra_edges;
   added_extra_edges.reserve(_nodes.size());
 
-  for(const auto& stream : node_streams) {
+  for(const auto& stream : _node_streams_scratch) {
     if(stream.size() <= 1) {
       continue;
     }
@@ -1600,7 +1656,7 @@ bool Graph::process_backward_edges() {
 
 }
 
-bool Graph::process_backward_edges_taskflow() { 
+bool Graph::process_backward_edges_taskflow(bool use_round_robin) { 
 
   _num_backward_edges += _backward_edges.size();
 
@@ -1674,7 +1730,9 @@ bool Graph::process_backward_edges_taskflow() {
     //           << " right_bound: " << right_update_bound->_name << "\n"; 
 
     // process taskflow sequence based on updated _topo_nodes
-    _update_taskflow_sequence(left_update_bound, right_update_bound);
+    if(!use_round_robin) {
+      _update_taskflow_sequence(left_update_bound, right_update_bound);
+    }
 
   }
 
@@ -2521,6 +2579,342 @@ bool Graph::is_breakable_nodes_complete() {
 
   return (breakable_node_set_truth.size() == breakble_node_set.size());
 
+}
+
+void Graph::run_graph_pasta_partition_round_robin(size_t cur_parallelism) {
+
+  /* Step 1: Maintain topological sequence by processing backward edges */
+  process_backward_edges_taskflow();
+
+  /* Step 2: Assign nodes to streams based on topological sequence in a round-robin fashion */
+  const size_t n_streams = std::max<size_t>(1, cur_parallelism);
+  std::vector<std::vector<Node*>> node_streams(n_streams);
+  const size_t approx = (_topo_nodes.size() + n_streams - 1) / n_streams;
+  for(auto& s : node_streams) s.reserve(approx);
+  size_t index = 0;
+  for(Node* node : _topo_nodes) {
+    node_streams[index % n_streams].push_back(node);
+    ++index;
+  }
+
+  _critical_path_length_original += _get_critical_path_length_taskflow();
+
+  /* Step 3: Add extra dependencies to Taskflow based on node_streams */
+  std::vector<std::pair<Node*, Node*>> added_extra_edges;
+  added_extra_edges.reserve(_nodes.size());
+  for(const auto& stream : node_streams) {
+    if(stream.size() <= 1) continue;
+    for(size_t k = 0; k + 1 < stream.size(); ++k) {
+      Node* from = stream[k];
+      Node* to   = stream[k + 1];
+      if(!_has_original_edge(from, to)) {
+        from->_task.precede(to->_task);
+        added_extra_edges.emplace_back(from, to);
+      }
+    }
+  }
+
+  _critical_path_length_constrained += _get_critical_path_length_taskflow();
+
+  /* Step 4: Run Taskflow */
+  auto start_run_taskflow = std::chrono::steady_clock::now();
+  _executor.run(_taskflow).wait();
+  auto end_run_taskflow = std::chrono::steady_clock::now();
+  _pasta_taskflow_runtime += std::chrono::duration_cast<std::chrono::microseconds>(end_run_taskflow-start_run_taskflow).count();
+
+  /* Step 5: Recover Taskflow for next iteration */
+  for(const auto& [from, to] : added_extra_edges) {
+    from->_task.remove_successors(to->_task);
+  }
+
+} 
+
+void Graph::_ensure_level_exists(size_t k) {
+  while(_level_list.size() <= k) {
+    _level_list.emplace_back();
+  }
+}
+
+int Graph::_recompute_level(Node* n) const {
+  int best = -1;
+  for(Edge* e : n->_fanins) {
+    if(e->_from->_level > best) best = e->_from->_level;
+  }
+  return best + 1; // -1 + 1 = 0 when no fanins
+}
+
+void Graph::_place_node_at_level(Node* n, int k) {
+  _ensure_level_exists(static_cast<size_t>(k));
+  auto& bucket = _level_list[k];
+  bucket.push_back(n);
+  n->_level = k;
+  n->_level_it = std::prev(bucket.end());
+}
+
+void Graph::_incre_level_on_insert_edge(Node* u, Node* v) {
+  // Edge u -> v has already been added to fanins/fanouts by the time this is called.
+  if(u->_level + 1 <= v->_level) {
+    return; // v's level is already sufficient
+  }
+
+  // Forward BFS: increase levels only where needed.
+  std::queue<Node*> q;
+  q.push(v);
+
+  while(!q.empty()) {
+    Node* w = q.front(); q.pop();
+    int new_lv = _recompute_level(w);
+    if(new_lv <= w->_level) {
+      // Another path already pulled w to >= new_lv; nothing to propagate through w.
+      // (This can happen when w is enqueued multiple times.)
+      continue;
+    }
+    // Move w out of its current level bucket and into new_lv.
+    _level_list[w->_level].erase(w->_level_it);
+    _place_node_at_level(w, new_lv);
+
+    // Any fanout whose level is now stale (i.e., <= new_lv) must be re-examined.
+    for(Edge* e : w->_fanouts) {
+      Node* c = e->_to;
+      if(c->_level <= new_lv) {
+        q.push(c);
+      }
+    }
+  }
+}
+
+void Graph::_incre_level_on_remove_edge(Node* u, Node* v) {
+  // Edge u -> v has already been removed from fanins/fanouts by the time this is called.
+  // v's level may drop only if u was a sole level-maximizing predecessor.
+  if(u->_level + 1 != v->_level) {
+    return; // u wasn't at the critical predecessor level
+  }
+  // Check if any other predecessor of v is still at u's level.
+  for(Edge* e : v->_fanins) {
+    if(e->_from->_level == u->_level) {
+      return; // another predecessor keeps v's level pinned
+    }
+  }
+
+  // Forward BFS: recompute levels; propagate when a level actually drops.
+  std::queue<Node*> q;
+  q.push(v);
+
+  while(!q.empty()) {
+    Node* w = q.front(); q.pop();
+    int new_lv = _recompute_level(w);
+    if(new_lv >= w->_level) {
+      // w's level didn't drop; don't propagate.
+      continue;
+    }
+    _level_list[w->_level].erase(w->_level_it);
+    _place_node_at_level(w, new_lv);
+
+    // Check fanouts: any child whose level-1 used to include w could drop.
+    for(Edge* e : w->_fanouts) {
+      Node* c = e->_to;
+      if(c->_level > new_lv + 1) {
+        // c's current level is higher than it would need for w; re-examine.
+        // (This is conservative; _recompute_level will be exact.)
+        q.push(c);
+      }
+    }
+  }
+
+  // Trim trailing empty buckets so _level_list.size() == max_level + 1,
+  // matching what _get_level_list_for_cudaflow() would produce.
+  while(!_level_list.empty() && _level_list.back().empty()) {
+    _level_list.pop_back();
+  }
+}
+
+void Graph::run_graph_cudaflow_partition_update_incre(size_t num_streams) { // num_streams = max_parallelism
+
+  /* Step 1: Level list is maintained incrementally in insert_edge / remove_edge.
+   *         We time this block for apples-to-apples comparison with the non-incremental
+   *         version; it should be effectively zero. */
+  auto start_level_list = std::chrono::steady_clock::now();
+  // no-op: _level_list, node->_level, node->_level_it are all up-to-date
+  auto end_level_list = std::chrono::steady_clock::now();
+  size_t level_list_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_level_list - start_level_list).count();
+  _cudaflow_incre_level_list_runtime += level_list_runtime;
+
+  auto start_assign_streams = std::chrono::steady_clock::now();
+  /* Step 2: Assign nodes to streams level by level */
+  _assign_nodes_to_streams(num_streams);
+  auto end_assign_streams = std::chrono::steady_clock::now();
+  size_t assign_streams_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_assign_streams - start_assign_streams).count();
+  _cudaflow_assign_streams_runtime += assign_streams_runtime;
+
+  auto start_build_taskflow = std::chrono::steady_clock::now();
+  /* Step 3: Add extra dependencies to Taskflow based on node_streams */
+  std::vector<std::pair<Node*, Node*>> added_extra_edges;
+  added_extra_edges.reserve(_nodes.size());
+
+  for(const auto& stream : _node_streams_scratch) {
+    if(stream.size() <= 1) {
+      continue;
+    }
+    auto it = stream.begin();
+    auto next = std::next(it);
+    for(; next != stream.end(); ++it, ++next) {
+      Node* from = *it;
+      Node* to = *next;
+      if(!_has_original_edge(from, to)) {
+        from->_task.precede(to->_task);
+        added_extra_edges.emplace_back(from, to);
+      }
+    }
+  }
+  auto end_build_taskflow = std::chrono::steady_clock::now();
+  size_t construct_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_build_taskflow - start_build_taskflow).count();
+  _cudaflow_taskflow_buildtime += construct_runtime;
+
+  _critical_path_length_constrained += _get_critical_path_length_taskflow();
+
+  auto start_run_taskflow = std::chrono::steady_clock::now();
+  /* Step 4: Run Taskflow */
+  _executor.run(_taskflow).wait();
+  auto end_run_taskflow = std::chrono::steady_clock::now();
+  size_t taskflow_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_run_taskflow - start_run_taskflow).count();
+  _incre_runtime_with_cudaflow_partition += taskflow_runtime;
+
+  start_build_taskflow = std::chrono::steady_clock::now();
+  /* Step 5: Recover Taskflow for next iteration */
+  for(const auto& [from, to] : added_extra_edges) {
+    from->_task.remove_successors(to->_task);
+  }
+  end_build_taskflow = std::chrono::steady_clock::now();
+  construct_runtime = std::chrono::duration_cast<std::chrono::microseconds>(end_build_taskflow - start_build_taskflow).count();
+  _cudaflow_taskflow_buildtime += construct_runtime;
+
+}
+
+bool Graph::verify_cudaflow_partition_update_incre(size_t num_streams) {
+
+  std::unordered_map<Node*, int> saved_level;
+  saved_level.reserve(_nodes.size());
+  for(auto& node : _nodes) {
+    saved_level[&node] = node._level;
+  }
+  std::vector<std::list<Node*>> saved_level_list = _level_list;
+
+  _get_level_list_for_cudaflow();
+
+  bool ok = true;
+  const char* fail_reason = nullptr;
+
+  if(saved_level_list.size() != _level_list.size()) {
+    ok = false;
+    fail_reason = "level-list size mismatch";
+    std::cerr << "[verify] saved_size=" << saved_level_list.size()
+              << " rebuilt_size=" << _level_list.size() << "\n";
+  }
+  else {
+    for(size_t k = 0; k < _level_list.size() && ok; ++k) {
+      if(saved_level_list[k].size() != _level_list[k].size()) {
+        ok = false;
+        fail_reason = "bucket-size mismatch";
+        std::cerr << "[verify] level " << k
+                  << " saved_bucket_size=" << saved_level_list[k].size()
+                  << " rebuilt_bucket_size=" << _level_list[k].size() << "\n";
+        break;
+      }
+      for(Node* n : _level_list[k]) {
+        auto it = saved_level.find(n);
+        if(it == saved_level.end()) {
+          ok = false;
+          fail_reason = "node missing from saved_level map";
+          std::cerr << "[verify] node " << n->name() << " not in saved_level\n";
+          break;
+        }
+        if(it->second != static_cast<int>(k)) {
+          ok = false;
+          fail_reason = "node level mismatch";
+          std::cerr << "[verify] node " << n->name()
+                    << " saved_level=" << it->second
+                    << " rebuilt_level=" << k << "\n";
+          break;
+        }
+      }
+    }
+  }
+
+  if(!ok) {
+    std::cerr << "[verify] FAILED at level-check: " << fail_reason << "\n";
+    // Restore and return early — don't muck with Taskflow if levels already diverged
+    _level_list = std::move(saved_level_list);
+    for(size_t k = 0; k < _level_list.size(); ++k) {
+      for(auto it = _level_list[k].begin(); it != _level_list[k].end(); ++it) {
+        (*it)->_level = static_cast<int>(k);
+        (*it)->_level_it = it;
+      }
+    }
+    return false;
+  } 
+
+  /* Step 3: Assign nodes to streams (using the fresh _level_list — identical to
+   *         what run_graph_cudaflow_partition_update_incre would use given that
+   *         the snapshot matched). */
+  _assign_nodes_to_streams(num_streams);
+
+  /* Step 4: Add extra dependencies (same as non-incremental verify). */
+  std::vector<std::pair<Node*, Node*>> added_extra_edges;
+  added_extra_edges.reserve(_nodes.size());
+
+  for(const auto& stream : _node_streams_scratch) {
+    if(stream.size() <= 1) {
+      continue;
+    }
+
+    auto it = stream.begin();
+    auto next = std::next(it);
+
+    for(; next != stream.end(); ++it, ++next) {
+      Node* from = *it;
+      Node* to = *next;
+
+      if(!_has_original_edge(from, to)) {
+        from->_task.precede(to->_task);
+        added_extra_edges.emplace_back(from, to);
+      }
+    }
+  }
+
+  /* Step 5: Parallelism check (same as non-incremental verify). */
+  try {
+    auto levels = _get_taskflow_level_list();
+
+    size_t max_parallelism = 0;
+    for(const auto& level : levels) {
+      max_parallelism = std::max(max_parallelism, level.size());
+    }
+
+    if(max_parallelism > num_streams) {
+      ok = false;
+    }
+  }
+  catch(...) {
+    ok = false;
+  }
+
+  /* Step 6: Recover Taskflow. */
+  for(const auto& [from, to] : added_extra_edges) {
+    from->_task.remove_successors(to->_task);
+  }
+
+  /* Step 7: Restore the incrementally-maintained level state.
+   *         We move the snapshot back into _level_list and rebuild node->_level
+   *         and node->_level_it so subsequent iterations see no disturbance. */
+  _level_list = std::move(saved_level_list);
+  for(size_t k = 0; k < _level_list.size(); ++k) {
+    for(auto it = _level_list[k].begin(); it != _level_list[k].end(); ++it) {
+      (*it)->_level = static_cast<int>(k);
+      (*it)->_level_it = it;
+    }
+  }
+
+  return ok;
 }
 
 } // end of namespace pasta
