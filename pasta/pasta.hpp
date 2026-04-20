@@ -8,6 +8,7 @@
 #include "taskflow/taskflow.hpp"
 #include "wsq.hpp"
 #include <utility>
+#include <unordered_set>
 
 namespace pasta {
 
@@ -98,6 +99,7 @@ class Node {
     std::list<Node*>::iterator _level_it;
 
     bool _in_topo_nodes = false;  // true iff this node is linked into _topo_nodes
+
 };
 
 class Edge {
@@ -241,6 +243,12 @@ class Graph {
     inline size_t get_num_selected_breakable_nodes() const {
       return _num_selected_breakable_nodes;
     }
+    inline size_t get_semaphore_taskflow_runtime() const {
+      return _semaphore_taskflow_runtime;
+    }
+    inline size_t get_semaphore_taskflow_buildtime() const {
+      return _semaphore_taskflow_buildtime;
+    }
     void test_func();
 
     // check cycle
@@ -264,7 +272,7 @@ class Graph {
     // run graph with taskflow
     void run_graph_before_partition(size_t matrix_size);
     void run_graph_after_partition(size_t matrix_size);
-    void run_graph_semaphore(size_t matrix_size, size_t num_semaphore); // num_semaphore = max_parallelism
+    void run_graph_semaphore(size_t num_semaphore); // num_semaphore = max_parallelism
     void run_graph_cudaflow_partition(size_t matrix_size, size_t num_streams); // num_streams = max_parallelism
     /* For this version of cudaflow, we try to improve the runtime of assigning streams first, then see 
        try to incrementally update level list, then incrementally apply changes to Taskflow   
@@ -441,6 +449,10 @@ class Graph {
     size_t _incre_runtime_with_cudaflow_partition = 0;
     size_t _incre_partition_runtime_with_cudaflow_partition = 0;
     size_t _incre_construct_runtime_with_cudaflow = 0;
+
+    // semaphore 
+    size_t _semaphore_taskflow_buildtime = 0;
+    size_t _semaphore_taskflow_runtime = 0;
 
     // cudaflow partitioning.
     // Apply full partitioning (topological sort) for each incremental iteration 

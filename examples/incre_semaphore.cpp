@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
     // std::cout << "---------------------\n";
 
     // run with current semaphore setting
-    graph.run_graph_semaphore(matrix_size, num_semaphore);
+    graph.run_graph_semaphore(num_semaphore);
 
     // get N random numbers
     std::vector<int> random_nodes = generate_random_nums(graph.num_nodes(), N, gen);

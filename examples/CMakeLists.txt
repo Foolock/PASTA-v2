@@ -3,7 +3,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build/examples)
 set(PASTA_EXAMPLES
   simple
   manual
-  run
   incre_semaphore 
   incre_cudaflow_partition 
   modify_edges
@@ -14,9 +13,10 @@ set(PASTA_EXAMPLES
   modify_edges_with_cudaflow 
   modify_edges_with_cudaflow_update 
   modify_edges_with_cudaflow_update_incre 
+  modify_nodes_with_cudaflow_update_incre
+  modify_nodes_with_semaphore
   mis
   cudaflow_partition
-  semaphore
 )
 
 foreach(example IN LISTS PASTA_EXAMPLES)
