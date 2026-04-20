@@ -96,6 +96,8 @@ class Node {
 
     /* Indicate the node location within one level in _level_list */
     std::list<Node*>::iterator _level_it;
+
+    bool _in_topo_nodes = false;  // true iff this node is linked into _topo_nodes
 };
 
 class Edge {
@@ -336,6 +338,8 @@ class Graph {
     // _breakable_nodes[i] is the last node of one segments.
     // _breakable_nodes.size() = maximum potential parallelism - 1
     std::vector<Node*> _breakable_nodes;
+
+    uint64_t _next_node_uid = 0;  // monotonic counter for generating unique node names
 
     /*
       --------- For cudaflow partitioning -------------

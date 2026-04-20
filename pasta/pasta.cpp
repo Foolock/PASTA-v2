@@ -63,6 +63,7 @@ Graph::Graph(const std::string& filename, RunMode mode, size_t matrix_size) {
     _topo_nodes.push_back(topo[i]);
     topo[i]->_topo_it = std::prev(_topo_nodes.end());
     topo[i]->_pos = pos;
+    topo[i]->_in_topo_nodes = true;   // <-- add this
     pos += 1024;
   }
 
@@ -131,6 +132,20 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
   _pasta_taskflow_buildtime += taskflow_constucttime;
   _cudaflow_taskflow_buildtime += taskflow_constucttime;
 
+  // Incremental level-list maintenance for node insertion.
+  // A fresh node has no fanins, so by _recompute_level's definition L=0.
+  // Any subsequent insert_edge that makes this node a fanout of an existing node
+  // will raise its level via _incre_level_on_insert_edge.
+  // Guarded by _initialized because during the constructor's node-loading pass,
+  // _level_list hasn't been built yet — the constructor builds it once at the end.
+  if(_initialized && mode == RunMode::IncrementalPartition) {
+    auto s = std::chrono::steady_clock::now();
+    _place_node_at_level(node_ptr, 0);
+    auto e = std::chrono::steady_clock::now();
+    _cudaflow_incre_level_list_runtime +=
+      std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
+  }
+
   return node_ptr;
 }
 
@@ -143,7 +158,8 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode) {
 
   // We only mark _linked_to_is_actual here for forward edges.
   // Backward edges will be handled in process_backward_edges_taskflow().
-  if(_initialized && from->_pos < to->_pos) {
+  // if(_initialized && from->_pos < to->_pos) {
+  if(_initialized && from->_in_topo_nodes && to->_in_topo_nodes && from->_pos < to->_pos) {
     // if from->_pos < to->_pos, then from is not the last node
     auto it = from->_topo_it;
     Node* next = *(std::next(it));
@@ -203,20 +219,25 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode) {
 
 void Graph::remove_node(Node* node, RunMode mode) {
 
-  // remove its fanin/fanout edges from _edges
-  // remove_edge will erase this edge from node->_fanins/fanouts, so no need to pop_front()
+  // Remove its fanin/fanout edges from _edges.
+  // remove_edge will erase each edge from node->_fanins/fanouts, so no need to pop_front().
+  // Forward `mode` so that under IncrementalPartition / Semaphore modes the Taskflow
+  // and _level_list stay in sync (previously this was defaulting to RunMode::None,
+  // silently bypassing all incremental maintenance).
   while(!node->_fanins.empty()) {
     Edge* from = node->_fanins.front();
-    remove_edge(from);
+    remove_edge(from, mode);
   }
   while(!node->_fanouts.empty()) {
     Edge* to = node->_fanouts.front();
-    remove_edge(to);
+    remove_edge(to, mode);
   }
-  
+
   auto start_construct = std::chrono::steady_clock::now();
-  // if run taskflow with semaphore
-  if(mode == RunMode::Semaphore) {
+  // Erase the task from the Taskflow under both Semaphore and IncrementalPartition modes.
+  // Under IncrementalPartition the task was created by insert_node; leaving it in the
+  // Taskflow would leak across iterations and keep growing the executor's work graph.
+  if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
     _taskflow.erase(node->_task);
   }
   auto end_construct = std::chrono::steady_clock::now();
@@ -225,6 +246,27 @@ void Graph::remove_node(Node* node, RunMode mode) {
   _incre_construct_runtime_with_cudaflow += taskflow_constucttime;
   _pasta_taskflow_buildtime += taskflow_constucttime;
   _cudaflow_taskflow_buildtime += taskflow_constucttime;
+
+  // Incremental level-list maintenance for node removal.
+  // At this point all of the node's fanin/fanout edges have been removed, and the
+  // edge-removal cascade inside remove_edge has already updated the levels of any
+  // descendants that needed to drop. We just need to unlink `node` from its bucket
+  // and trim trailing empties so _level_list.size() == max_level + 1.
+  if(_initialized && mode == RunMode::IncrementalPartition) {
+    auto s = std::chrono::steady_clock::now();
+    _level_list[node->_level].erase(node->_level_it);
+    while(!_level_list.empty() && _level_list.back().empty()) {
+      _level_list.pop_back();
+    }
+    auto e = std::chrono::steady_clock::now();
+    _cudaflow_incre_level_list_runtime +=
+      std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
+  }
+
+  if(node->_in_topo_nodes) {
+    _topo_nodes.erase(node->_topo_it);
+    node->_in_topo_nodes = false;
+  }
 
   _nodes.erase(node->_node_satellite);
 }
@@ -241,7 +283,8 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
 
   // Since I always remove edges first, so from is not the last one
   // But it is not safe to assume that
-  if(from->_pos < to->_pos) { 
+  // if(from->_pos < to->_pos) { 
+  if(from->_in_topo_nodes && to->_in_topo_nodes && from->_pos < to->_pos) {
     // use this condition to ensure from is not the last one
     auto it = from->_topo_it;
     Node* next = *(std::next(it));
@@ -413,7 +456,9 @@ std::vector<Node*> Graph::add_random_nodes(size_t N, std::mt19937& gen,
   // 1) insert nodes
   for (size_t i = 0; i < N; ++i) {
     // Make names unique-ish; you can replace with your own global "iteration count"
-    std::string name = name_prefix + "_" + std::to_string(_nodes.size()) + "_" + std::to_string(i);
+    // std::string name = name_prefix + "_" + std::to_string(_nodes.size()) + "_" + std::to_string(i);
+    // now:
+    std::string name = name_prefix + "_" + std::to_string(_next_node_uid++);
     new_nodes.push_back(insert_node(name, mode, matrix_size));
   }
 
@@ -965,16 +1010,21 @@ void Graph::test_func() {
 }
 
 std::vector<std::vector<Node*>> Graph::_get_taskflow_level_list() {
+
+  struct TaskHash {
+    size_t operator()(const tf::Task& t) const { return t.hash_value(); }
+  };
+
   std::vector<tf::Task> tasks;
   tasks.reserve(_taskflow.num_tasks());
 
-  // task name -> index in tasks
-  std::unordered_map<std::string, size_t> task_index;
+  // Map task -> index in `tasks`. Keyed on task identity (hash_value), not name,
+  // so duplicate task names don't collapse distinct tasks.
+  std::unordered_map<tf::Task, size_t, TaskHash> task_index;
   task_index.reserve(_taskflow.num_tasks());
 
-  // collect all tasks
   _taskflow.for_each_task([&](tf::Task t) {
-    task_index[t.name()] = tasks.size();
+    task_index[t] = tasks.size();
     tasks.push_back(t);
   });
 
@@ -983,21 +1033,19 @@ std::vector<std::vector<Node*>> Graph::_get_taskflow_level_list() {
     return levels;
   }
 
-  // node name -> Node*
-  std::unordered_map<std::string, Node*> name_to_node;
-  name_to_node.reserve(_nodes.size());
+  // Map Node's _task handle -> Node*. Keyed on task identity.
+  std::unordered_map<tf::Task, Node*, TaskHash> task_to_node;
+  task_to_node.reserve(_nodes.size());
 
   for(auto& node : _nodes) {
-    name_to_node[node._name] = &node;
+    task_to_node[node._task] = &node;
   }
 
-  // indegree
   std::vector<size_t> indeg(tasks.size());
   for(size_t i = 0; i < tasks.size(); ++i) {
     indeg[i] = tasks[i].num_predecessors();
   }
 
-  // initial ready set
   std::vector<size_t> curr;
   for(size_t i = 0; i < tasks.size(); ++i) {
     if(indeg[i] == 0) {
@@ -1018,17 +1066,21 @@ std::vector<std::vector<Node*>> Graph::_get_taskflow_level_list() {
 
       const auto& task = tasks[u];
 
-      auto nit = name_to_node.find(task.name());
-      if(nit == name_to_node.end()) {
-        throw std::runtime_error("cannot find Node* for task " + task.name());
+      auto nit = task_to_node.find(task);
+      if(nit == task_to_node.end()) {
+        throw std::runtime_error(
+          "cannot find Node* for task " + task.name()
+        );
       }
 
       level.push_back(nit->second);
 
       task.for_each_successor([&](tf::Task succ) {
-        auto sit = task_index.find(succ.name());
+        auto sit = task_index.find(succ);
         if(sit == task_index.end()) {
-          throw std::runtime_error("cannot find successor index for task " + succ.name());
+          throw std::runtime_error(
+            "cannot find successor index for task " + succ.name()
+          );
         }
 
         size_t v = sit->second;
@@ -2447,15 +2499,18 @@ size_t Graph::_get_max_parallelism_taskflow() {
 
 size_t Graph::_get_critical_path_length_taskflow() {
 
+  struct TaskHash {
+    size_t operator()(const tf::Task& t) const { return t.hash_value(); }
+  };
+
   std::vector<tf::Task> tasks;
   tasks.reserve(_taskflow.num_tasks());
 
-  // task name -> index
-  std::unordered_map<std::string, size_t> task_index;
+  std::unordered_map<tf::Task, size_t, TaskHash> task_index;
   task_index.reserve(_taskflow.num_tasks());
 
   _taskflow.for_each_task([&](tf::Task t) {
-    task_index[t.name()] = tasks.size();
+    task_index[t] = tasks.size();
     tasks.push_back(t);
   });
 
@@ -2463,54 +2518,39 @@ size_t Graph::_get_critical_path_length_taskflow() {
     return 0;
   }
 
-  // indegree for topological traversal
   std::vector<size_t> indeg(tasks.size(), 0);
   for(size_t i = 0; i < tasks.size(); ++i) {
     indeg[i] = tasks[i].num_predecessors();
   }
 
-  // dp[i] = longest path length ending at task i
-  // here length is measured in number of nodes on the path
   std::vector<size_t> dp(tasks.size(), 1);
 
   std::queue<size_t> q;
   for(size_t i = 0; i < tasks.size(); ++i) {
-    if(indeg[i] == 0) {
-      q.push(i);
-    }
+    if(indeg[i] == 0) q.push(i);
   }
 
   size_t visited = 0;
   size_t longest = 0;
 
   while(!q.empty()) {
-    size_t u = q.front();
-    q.pop();
+    size_t u = q.front(); q.pop();
     ++visited;
-
     longest = std::max(longest, dp[u]);
 
     tasks[u].for_each_successor([&](tf::Task succ) {
-      auto sit = task_index.find(succ.name());
+      auto sit = task_index.find(succ);
       if(sit == task_index.end()) {
-        throw std::runtime_error(
-          "cannot find successor index for task " + succ.name()
-        );
+        throw std::runtime_error("cannot find successor index for task " + succ.name());
       }
-
       size_t v = sit->second;
-
-      // relax longest path
       dp[v] = std::max(dp[v], dp[u] + 1);
-
-      if(--indeg[v] == 0) {
-        q.push(v);
-      }
+      if(--indeg[v] == 0) q.push(v);
     });
   }
 
   if(visited != tasks.size()) {
-    throw std::runtime_error("Taskflow graph is not a DAG");
+    throw std::runtime_error("Taskflow graph is not a DAG (in critical path)");
   }
 
   return longest;
@@ -2792,6 +2832,16 @@ void Graph::run_graph_cudaflow_partition_update_incre(size_t num_streams) { // n
 
 bool Graph::verify_cudaflow_partition_update_incre(size_t num_streams) {
 
+  // Before step 0:
+  size_t saved_total = 0;
+  for(auto& b : _level_list) saved_total += b.size();
+  std::cerr << "[verify] _nodes.size()=" << _nodes.size()
+            << " _level_list total=" << saved_total << "\n";
+
+  size_t task_count = 0;
+  _taskflow.for_each_task([&](tf::Task){ ++task_count; });
+  std::cerr << "[verify] taskflow.num_tasks=" << task_count << "\n";
+
   std::unordered_map<Node*, int> saved_level;
   saved_level.reserve(_nodes.size());
   for(auto& node : _nodes) {
@@ -2886,17 +2936,48 @@ bool Graph::verify_cudaflow_partition_update_incre(size_t num_streams) {
     auto levels = _get_taskflow_level_list();
 
     size_t max_parallelism = 0;
-    for(const auto& level : levels) {
-      max_parallelism = std::max(max_parallelism, level.size());
+    size_t max_level_idx = 0;
+    for(size_t li = 0; li < levels.size(); ++li) {
+      if(levels[li].size() > max_parallelism) {
+        max_parallelism = levels[li].size();
+        max_level_idx = li;
+      }
     }
 
     if(max_parallelism > num_streams) {
       ok = false;
+      std::cerr << "[verify] parallelism check FAILED: max_parallelism="
+                << max_parallelism << " at level " << max_level_idx
+                << " exceeds num_streams=" << num_streams << "\n";
+      std::cerr << "[verify] nodes at that level:";
+      for(Node* n : levels[max_level_idx]) {
+        std::cerr << " " << n->name();
+      }
+      std::cerr << "\n";
+      // also dump _level_list widths for comparison
+      std::cerr << "[verify] _level_list widths:";
+      for(auto& b : _level_list) std::cerr << " " << b.size();
+      std::cerr << "\n";
     }
+  }
+  catch(const std::exception& ex) {
+    ok = false;
+    std::cerr << "[verify] parallelism check threw: " << ex.what() << "\n";
+    // Dump the Taskflow's actual edges
+    std::cerr << "[verify] Taskflow dump:\n";
+    _taskflow.for_each_task([&](tf::Task t) {
+      std::cerr << "  task '" << t.name() << "' (" << t.num_predecessors() << " preds, "
+                << t.num_successors() << " succs) ->";
+      t.for_each_successor([&](tf::Task s) {
+        std::cerr << " " << s.name();
+      });
+      std::cerr << "\n";
+    });
   }
   catch(...) {
     ok = false;
-  }
+    std::cerr << "[verify] parallelism check threw (unknown)\n";
+  } 
 
   /* Step 6: Recover Taskflow. */
   for(const auto& [from, to] : added_extra_edges) {
