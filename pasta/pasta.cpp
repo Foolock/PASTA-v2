@@ -130,6 +130,9 @@ Node* Graph::insert_node(const std::string& name, RunMode mode, size_t matrix_si
   if(_initialized && mode == RunMode::IncrementalPartition) {
     auto s = std::chrono::steady_clock::now();
     _place_node_at_level(node_ptr, 0);
+    if(_last_num_streams > 0) {
+      _place_node_in_stream(node_ptr, 0);
+    }
     auto e = std::chrono::steady_clock::now();
     _cudaflow_incre_level_list_runtime +=
       std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
@@ -242,10 +245,14 @@ void Graph::remove_node(Node* node, RunMode mode) {
   // and trim trailing empties so _level_list.size() == max_level + 1.
   if(_initialized && mode == RunMode::IncrementalPartition) {
     auto s = std::chrono::steady_clock::now();
+    if(_initialized && mode == RunMode::IncrementalPartition && _last_num_streams > 0) {
+      _remove_node_from_stream(node);
+    }
     _level_list[node->_level].erase(node->_level_it);
     while(!_level_list.empty() && _level_list.back().empty()) {
       _level_list.pop_back();
     }
+    _resync_level_stream_counts();   
     auto e = std::chrono::steady_clock::now();
     _cudaflow_incre_level_list_runtime +=
       std::chrono::duration_cast<std::chrono::microseconds>(e - s).count();
@@ -2654,9 +2661,19 @@ void Graph::_incre_level_on_insert_edge(Node* u, Node* v) {
       // (This can happen when w is enqueued multiple times.)
       continue;
     }
+    /*
     // Move w out of its current level bucket and into new_lv.
     _level_list[w->_level].erase(w->_level_it);
     _place_node_at_level(w, new_lv);
+    */
+    if(_last_num_streams > 0) {
+      _remove_node_from_stream(w);  // uses w->_level (current/old)
+    }
+    _level_list[w->_level].erase(w->_level_it);
+    _place_node_at_level(w, new_lv);  // overwrites w->_level
+    if(_last_num_streams > 0) {
+      _place_node_in_stream(w, new_lv);
+    }
 
     // Any fanout whose level is now stale (i.e., <= new_lv) must be re-examined.
     for(Edge* e : w->_fanouts) {
@@ -2692,8 +2709,18 @@ void Graph::_incre_level_on_remove_edge(Node* u, Node* v) {
       // w's level didn't drop; don't propagate.
       continue;
     }
+    /*
     _level_list[w->_level].erase(w->_level_it);
     _place_node_at_level(w, new_lv);
+    */
+    if(_last_num_streams > 0) {
+      _remove_node_from_stream(w);
+    }
+    _level_list[w->_level].erase(w->_level_it);
+    _place_node_at_level(w, new_lv);
+    if(_last_num_streams > 0) {
+      _place_node_in_stream(w, new_lv);
+    }
 
     // Check fanouts: any child whose level-1 used to include w could drop.
     for(Edge* e : w->_fanouts) {
@@ -2711,6 +2738,7 @@ void Graph::_incre_level_on_remove_edge(Node* u, Node* v) {
   while(!_level_list.empty() && _level_list.back().empty()) {
     _level_list.pop_back();
   }
+  _resync_level_stream_counts();   
 }
 
 void Graph::run_graph_cudaflow_partition_update_incre(size_t num_streams) { // num_streams = max_parallelism
@@ -2941,6 +2969,477 @@ bool Graph::verify_cudaflow_partition_update_incre(size_t num_streams) {
   }
 
   return ok;
+}
+
+size_t Graph::_pick_least_loaded_stream(int level) const {
+  // Returns the stream slot at this level with the fewest assigned nodes.
+  // Ties broken by lowest stream id.
+  if(_last_num_streams == 0) {
+    throw std::runtime_error("_pick_least_loaded_stream called before _streams initialized");
+  }
+  const size_t base = static_cast<size_t>(level) * _last_num_streams;
+  size_t best_s = 0;
+  size_t best_count = _level_stream_counts[base];
+  for(size_t s = 1; s < _last_num_streams; ++s) {
+    if(_level_stream_counts[base + s] < best_count) {
+      best_count = _level_stream_counts[base + s];
+      best_s = s;
+    }
+  }
+  return best_s;
+}
+
+void Graph::_adjust_taskflow_edges_for_stream_change(
+  size_t s,
+  std::list<Node*>::iterator it,
+  int operation
+) {
+  // it points into _streams[s]. operation is +1 (just-inserted) or -1 (about-to-remove).
+  //
+  // Convention:
+  //   +1 (just-inserted at `it`):
+  //     - If there's a prev (it != begin) and a next (next(it) exists):
+  //         remove old edge prev->next (if present and not original),
+  //         add prev->it and it->next.
+  //     - Else just add the single new edge if there's a neighbor.
+  //   -1 (about-to-remove at `it`):
+  //     - If there's a prev and a next:
+  //         remove prev->it and it->next,
+  //         add prev->next (if not original).
+  //     - Else just remove the single edge.
+  //
+  // We only add/remove an edge between two nodes if no original (logical-DAG) edge
+  // already exists between them — that guard matches the policy in _assign_nodes_to_streams
+  // (where _has_original_edge filters duplicate adds).
+
+  auto& stream = _streams[s];
+  Node* curr = *it;
+
+  // Determine prev and next iterators.
+  bool has_prev = (it != stream.begin());
+  auto next_it = std::next(it);
+  bool has_next = (next_it != stream.end());
+
+  Node* prev = has_prev ? *std::prev(it) : nullptr;
+  Node* next = has_next ? *next_it : nullptr;
+
+  if(operation == +1) {
+    // Just-inserted curr between prev and next.
+    if(has_prev && has_next) {
+      // Bridge edge prev -> next (which existed before insert) is now obsolete.
+      if(!_has_original_edge(prev, next)) {
+        prev->_task.remove_successors(next->_task);
+      }
+    }
+    if(has_prev && !_has_original_edge(prev, curr)) {
+      prev->_task.precede(curr->_task);
+    }
+    if(has_next && !_has_original_edge(curr, next)) {
+      curr->_task.precede(next->_task);
+    }
+  }
+  else if(operation == -1) {
+    // About to remove curr from between prev and next.
+    if(has_prev && !_has_original_edge(prev, curr)) {
+      prev->_task.remove_successors(curr->_task);
+    }
+    if(has_next && !_has_original_edge(curr, next)) {
+      curr->_task.remove_successors(next->_task);
+    }
+    if(has_prev && has_next && !_has_original_edge(prev, next)) {
+      prev->_task.precede(next->_task);
+    }
+  }
+}
+
+void Graph::_place_node_in_stream(Node* n, int level) {
+  // Assigns n to the least-loaded stream at `level`, appends to that stream's list,
+  // and updates Taskflow edges accordingly.
+  // Caller must ensure _streams and _level_stream_counts are sized for `level`.
+  if(_last_num_streams == 0) return;
+
+  // Grow _level_stream_counts if needed (when nodes climb past current max level).
+  size_t needed = (static_cast<size_t>(level) + 1) * _last_num_streams;
+  if(_level_stream_counts.size() < needed) {
+    _level_stream_counts.resize(needed, 0);
+  }
+
+  size_t s = _pick_least_loaded_stream(level);
+
+  // Insert at the back of _streams[s]. (Position within stream is by insertion
+  // order, which corresponds to ascending level — we always either rebuild from
+  // scratch or insert nodes that just moved to a higher level, but a level
+  // increase means the node should be placed *after* lower-level entries.
+  // For correctness under arbitrary level changes we need to find the right
+  // position; see note below.)
+  //
+  // For now, insert at the position just after the last existing level-`level`-or-lower
+  // node. We do this with a linear scan from the end, which is O(stream length above level).
+  // Stream length is bounded by num_levels, so this is bounded by num_levels per insert.
+  auto pos = _streams[s].end();
+  while(pos != _streams[s].begin()) {
+    auto prev = std::prev(pos);
+    if((*prev)->_level <= level) break;
+    pos = prev;
+  }
+
+  auto inserted_it = _streams[s].insert(pos, n);
+  n->_stream_id = static_cast<int>(s);
+  n->_stream_pos = inserted_it;
+  ++_level_stream_counts[static_cast<size_t>(level) * _last_num_streams + s];
+
+  _adjust_taskflow_edges_for_stream_change(s, inserted_it, +1);
+}
+
+void Graph::_remove_node_from_stream(Node* n) {
+  if(n->_stream_id < 0 || _last_num_streams == 0) return;
+  size_t s = static_cast<size_t>(n->_stream_id);
+
+  // Adjust Taskflow edges first (operation = -1 reads neighbors at current position).
+  _adjust_taskflow_edges_for_stream_change(s, n->_stream_pos, -1);
+
+  // Update count and remove from list.
+  size_t count_idx = static_cast<size_t>(n->_level) * _last_num_streams + s;
+  if(count_idx < _level_stream_counts.size() && _level_stream_counts[count_idx] > 0) {
+    --_level_stream_counts[count_idx];
+  }
+  _streams[s].erase(n->_stream_pos);
+  n->_stream_id = -1;
+}
+
+void Graph::_rebuild_streams_full(size_t num_streams) {
+  // Tear down any existing partition: remove all stream-only Taskflow edges,
+  // clear _streams and _level_stream_counts.
+  if(_last_num_streams > 0) {
+    for(size_t s = 0; s < _streams.size(); ++s) {
+      auto& stream = _streams[s];
+      if(stream.size() < 2) {
+        stream.clear();
+        continue;
+      }
+      auto it = stream.begin();
+      auto next = std::next(it);
+      while(next != stream.end()) {
+        Node* from = *it;
+        Node* to = *next;
+        if(!_has_original_edge(from, to)) {
+          from->_task.remove_successors(to->_task);
+        }
+        ++it;
+        ++next;
+      }
+      stream.clear();
+    }
+    for(auto& n : _nodes) {
+      n._stream_id = -1;
+    }
+  }
+
+  // Resize containers for the new num_streams.
+  _last_num_streams = num_streams;
+  _streams.assign(num_streams, std::list<Node*>{});
+  _level_stream_counts.assign(_level_list.size() * num_streams, 0);
+
+  // Re-place every node according to least-loaded-at-level policy.
+  // Walking _level_list in order ensures stream lists stay sorted by level.
+  for(size_t L = 0; L < _level_list.size(); ++L) {
+    for(Node* node : _level_list[L]) {
+      _place_node_in_stream(node, static_cast<int>(L));
+    }
+  }
+}
+
+void Graph::run_graph_cudaflow_partition_update_incre_v2(size_t num_streams) {
+
+  /* Step 1: Level list — already maintained incrementally. No-op. */
+
+  /* Step 2: Stream partition.
+   *   - If num_streams changed since last call, full rebuild.
+   *   - Otherwise no-op: _streams was maintained incrementally during DAG
+   *     mutations between iterations, and the Taskflow already has the
+   *     correct stream edges. */
+  auto start_assign = std::chrono::steady_clock::now();
+
+  if(num_streams != _last_num_streams) {
+    _rebuild_streams_full(num_streams);
+  }
+
+  auto end_assign = std::chrono::steady_clock::now();
+  _cudaflow_assign_streams_runtime +=
+    std::chrono::duration_cast<std::chrono::microseconds>(end_assign - start_assign).count();
+
+  /* Step 3: No-op. Stream edges are already in the Taskflow, either from the
+   *         rebuild in Step 2 or from incremental maintenance during DAG edits. */
+
+  _critical_path_length_constrained += _get_critical_path_length_taskflow();
+
+  /* Step 4: Run Taskflow. */
+  auto start_run = std::chrono::steady_clock::now();
+  _executor.run(_taskflow).wait();
+  auto end_run = std::chrono::steady_clock::now();
+  _incre_runtime_with_cudaflow_partition +=
+    std::chrono::duration_cast<std::chrono::microseconds>(end_run - start_run).count();
+
+  /* Step 5: No-op. Stream edges persist in the Taskflow for the next iteration. */
+}
+
+bool Graph::verify_cudaflow_partition_update_incre_v2(size_t num_streams) {
+
+  /* ----- Diagnostics: basic state counts ----- */
+  size_t saved_total_levels = 0;
+  for(auto& b : _level_list) saved_total_levels += b.size();
+  std::cerr << "[verify-v2] _nodes.size()=" << _nodes.size()
+            << " _level_list total=" << saved_total_levels << "\n";
+
+  size_t task_count = 0;
+  _taskflow.for_each_task([&](tf::Task){ ++task_count; });
+  std::cerr << "[verify-v2] taskflow.num_tasks=" << task_count << "\n";
+
+  std::cerr << "[verify-v2] _last_num_streams=" << _last_num_streams
+            << " requested=" << num_streams << "\n";
+
+  /* ===== Section A: verify _level_list matches full rebuild ===== */
+
+  std::unordered_map<Node*, int> saved_level;
+  saved_level.reserve(_nodes.size());
+  for(auto& node : _nodes) {
+    saved_level[&node] = node._level;
+  }
+  std::vector<std::list<Node*>> saved_level_list = _level_list;
+
+  _get_level_list_for_cudaflow();  // overwrites _level_list, _level, _level_it
+
+  bool ok = true;
+  const char* fail_reason = nullptr;
+
+  if(saved_level_list.size() != _level_list.size()) {
+    ok = false;
+    fail_reason = "level-list size mismatch";
+    std::cerr << "[verify-v2] saved_size=" << saved_level_list.size()
+              << " rebuilt_size=" << _level_list.size() << "\n";
+  }
+  else {
+    for(size_t k = 0; k < _level_list.size() && ok; ++k) {
+      if(saved_level_list[k].size() != _level_list[k].size()) {
+        ok = false;
+        fail_reason = "bucket-size mismatch";
+        std::cerr << "[verify-v2] level " << k
+                  << " saved_bucket_size=" << saved_level_list[k].size()
+                  << " rebuilt_bucket_size=" << _level_list[k].size() << "\n";
+        break;
+      }
+      for(Node* n : _level_list[k]) {
+        auto it = saved_level.find(n);
+        if(it == saved_level.end()) {
+          ok = false;
+          fail_reason = "node missing from saved_level map";
+          std::cerr << "[verify-v2] node " << n->name() << " not in saved_level\n";
+          break;
+        }
+        if(it->second != static_cast<int>(k)) {
+          ok = false;
+          fail_reason = "node level mismatch";
+          std::cerr << "[verify-v2] node " << n->name()
+                    << " saved_level=" << it->second
+                    << " rebuilt_level=" << k << "\n";
+          break;
+        }
+      }
+    }
+  }
+
+  // Always restore _level_list (and _level, _level_it) before returning, even on failure.
+  // We do this once at the end via Section D.
+
+  if(!ok) {
+    std::cerr << "[verify-v2] FAILED in Section A (level list): " << fail_reason << "\n";
+    // Restore level state and return.
+    _level_list = std::move(saved_level_list);
+    for(size_t k = 0; k < _level_list.size(); ++k) {
+      for(auto it = _level_list[k].begin(); it != _level_list[k].end(); ++it) {
+        (*it)->_level = static_cast<int>(k);
+        (*it)->_level_it = it;
+      }
+    }
+    return false;
+  }
+
+  // Restore the snapshot — this puts _level_list back the way v2 left it,
+  // and rebuilds _level / _level_it. We do this BEFORE Section B because
+  // the stream check uses node->_level, which the rebuild above clobbered.
+  _level_list = std::move(saved_level_list);
+  for(size_t k = 0; k < _level_list.size(); ++k) {
+    for(auto it = _level_list[k].begin(); it != _level_list[k].end(); ++it) {
+      (*it)->_level = static_cast<int>(k);
+      (*it)->_level_it = it;
+    }
+  }
+
+  /* ===== Section B: verify _streams partition is internally consistent ===== */
+
+  // B1: Every node is in exactly one stream (or none if _last_num_streams == 0).
+  if(_last_num_streams > 0) {
+    if(_streams.size() != _last_num_streams) {
+      std::cerr << "[verify-v2] FAILED Section B: _streams.size()="
+                << _streams.size() << " != _last_num_streams="
+                << _last_num_streams << "\n";
+      return false;
+    }
+
+    size_t total_in_streams = 0;
+    for(auto& s : _streams) total_in_streams += s.size();
+    if(total_in_streams != _nodes.size()) {
+      std::cerr << "[verify-v2] FAILED Section B: total nodes in _streams="
+                << total_in_streams << " != _nodes.size()=" << _nodes.size() << "\n";
+      return false;
+    }
+
+    // B2: Every node's _stream_id and _stream_pos are valid.
+    //     For each stream, walk the list and check each node's satellites.
+    for(size_t s = 0; s < _streams.size(); ++s) {
+      int prev_level = -1;
+      for(auto it = _streams[s].begin(); it != _streams[s].end(); ++it) {
+        Node* n = *it;
+        if(n->_stream_id != static_cast<int>(s)) {
+          std::cerr << "[verify-v2] FAILED Section B: node " << n->name()
+                    << " in _streams[" << s << "] but _stream_id="
+                    << n->_stream_id << "\n";
+          return false;
+        }
+        if(n->_stream_pos != it) {
+          std::cerr << "[verify-v2] FAILED Section B: node " << n->name()
+                    << " _stream_pos doesn't match its position in _streams["
+                    << s << "]\n";
+          return false;
+        }
+        // B3: stream order must be non-decreasing in level (ASAP layering invariant).
+        if(n->_level < prev_level) {
+          std::cerr << "[verify-v2] FAILED Section B: stream " << s
+                    << " not sorted by level — node " << n->name()
+                    << " level " << n->_level << " after level " << prev_level << "\n";
+          return false;
+        }
+        prev_level = n->_level;
+      }
+    }
+
+    // B4: _level_stream_counts matches actual stream contents.
+    //     Recompute counts from _streams and compare element-wise.
+    std::vector<size_t> recomputed_counts(_level_list.size() * _last_num_streams, 0);
+    for(size_t s = 0; s < _streams.size(); ++s) {
+      for(Node* n : _streams[s]) {
+        size_t idx = static_cast<size_t>(n->_level) * _last_num_streams + s;
+        if(idx >= recomputed_counts.size()) {
+          std::cerr << "[verify-v2] FAILED Section B: node " << n->name()
+                    << " level " << n->_level << " in stream " << s
+                    << " produces out-of-range count index " << idx << "\n";
+          return false;
+        }
+        ++recomputed_counts[idx];
+      }
+    }
+    if(recomputed_counts.size() != _level_stream_counts.size()) {
+      std::cerr << "[verify-v2] FAILED Section B: _level_stream_counts size mismatch — "
+                << "recomputed " << recomputed_counts.size()
+                << " vs stored " << _level_stream_counts.size() << "\n";
+      return false;
+    }
+    for(size_t i = 0; i < recomputed_counts.size(); ++i) {
+      if(recomputed_counts[i] != _level_stream_counts[i]) {
+        size_t L = i / _last_num_streams;
+        size_t s = i % _last_num_streams;
+        std::cerr << "[verify-v2] FAILED Section B: _level_stream_counts mismatch at "
+                  << "level " << L << " stream " << s
+                  << " — stored " << _level_stream_counts[i]
+                  << " recomputed " << recomputed_counts[i] << "\n";
+        return false;
+      }
+    }
+
+    // B5: Per-level imbalance — informational only.
+    // The incremental policy doesn't rebalance after level changes drop a level's
+    // width, so a stream's count can slightly exceed the ideal ceil(W/num_streams)
+    // bound. This is a quality, not correctness, issue. Section C catches the
+    // real correctness invariant (Taskflow's actual parallelism <= num_streams).
+    size_t worst_excess = 0;
+    for(size_t L = 0; L < _level_list.size(); ++L) {
+      size_t W = _level_list[L].size();
+      if(W == 0) continue;
+      size_t max_per_stream = (W + _last_num_streams - 1) / _last_num_streams;
+      for(size_t s = 0; s < _last_num_streams; ++s) {
+        size_t c = _level_stream_counts[L * _last_num_streams + s];
+        if(c > max_per_stream && (c - max_per_stream) > worst_excess) {
+          worst_excess = c - max_per_stream;
+        }
+      }
+    }
+    if(worst_excess > 0) {
+      std::cerr << "[verify-v2] (info) max stream imbalance over ideal bound: "
+                << worst_excess << " nodes — non-fatal, may affect critical path\n";
+    }
+  }
+  // If _last_num_streams == 0, the v2 partition has not been initialized;
+  // there's nothing to verify in Section B. That's a valid state if the
+  // caller invokes verify before ever calling run_*_v2.
+
+  /* ===== Section C: verify Taskflow is acyclic and respects parallelism ===== */
+  /*
+   * Important: do NOT install or remove any stream edges here. v2 leaves
+   * the Taskflow in its post-run state with persistent stream edges, and we
+   * verify that as-is. Any edits would corrupt the persistent state.
+   */
+  try {
+    auto levels = _get_taskflow_level_list();
+
+    size_t max_parallelism = 0;
+    size_t max_level_idx = 0;
+    for(size_t li = 0; li < levels.size(); ++li) {
+      if(levels[li].size() > max_parallelism) {
+        max_parallelism = levels[li].size();
+        max_level_idx = li;
+      }
+    }
+
+    if(max_parallelism > num_streams) {
+      std::cerr << "[verify-v2] FAILED Section C: max_parallelism="
+                << max_parallelism << " at level " << max_level_idx
+                << " exceeds num_streams=" << num_streams << "\n";
+      std::cerr << "[verify-v2] nodes at that level:";
+      for(Node* n : levels[max_level_idx]) {
+        std::cerr << " " << n->name();
+      }
+      std::cerr << "\n";
+      return false;
+    }
+  }
+  catch(const std::exception& ex) {
+    std::cerr << "[verify-v2] FAILED Section C: parallelism check threw: "
+              << ex.what() << "\n";
+    return false;
+  }
+  catch(...) {
+    std::cerr << "[verify-v2] FAILED Section C: parallelism check threw unknown\n";
+    return false;
+  }
+
+  /* ===== Section D: nothing to restore ===== */
+  /*
+   * Section A already restored _level_list / _level / _level_it.
+   * Section B made no mutations.
+   * Section C made no mutations.
+   * Therefore _streams and Taskflow are exactly as v2 left them — safe for
+   * the next iteration of run_*_v2.
+   */
+
+  return true;
+}
+
+void Graph::_resync_level_stream_counts() {
+  if(_last_num_streams == 0) return;
+  size_t needed = _level_list.size() * _last_num_streams;
+  if(_level_stream_counts.size() != needed) {
+    _level_stream_counts.resize(needed, 0);
+  }
 }
 
 } // end of namespace pasta

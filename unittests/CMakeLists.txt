@@ -10,6 +10,7 @@ list(APPEND PASTA_UNITTESTS
   # check_modify_edges_cudaflow_update
   # check_modify_edges_cudaflow_update_incre
   check_modify_nodes_cudaflow_update_incre
+  check_modify_nodes_cudaflow_update_incre_v2
 )
 
 string(FIND '${CMAKE_CXX_FLAGS}' "-fsanitize" sanitize)
