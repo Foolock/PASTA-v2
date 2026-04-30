@@ -14,7 +14,7 @@ set(PASTA_EXAMPLES
   modify_edges_with_cudaflow_update 
   modify_edges_with_cudaflow_update_incre 
   modify_nodes_with_cudaflow_update_incre
-  modify_nodes_with_cudaflow_update_incre_stable
+  # modify_nodes_with_cudaflow_update_incre_stable
   modify_nodes_with_cudaflow_update_incre_rebuild_stream_stable
   modify_nodes_with_semaphore
   modify_nodes_with_semaphore_stable

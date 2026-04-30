@@ -100,11 +100,6 @@ class Node {
 
     bool _in_topo_nodes = false;  // true iff this node is linked into _topo_nodes
 
-    // Stream assignment satellites for the *_v2 incremental partition path.
-    // Used only by run_graph_cudaflow_partition_update_incre_v2.
-    int _stream_id = -1;
-    std::list<Node*>::iterator _stream_pos;
-
 };
 
 class Edge {
@@ -286,13 +281,6 @@ class Graph {
     /* Now apply incremental update for level list */
     void run_graph_cudaflow_partition_update_incre(size_t num_streams); // num_streams = max_parallelism
 
-    /* Like run_graph_cudaflow_partition_update_incre, but also maintains the stream
-       partition and Taskflow stream edges incrementally across iterations.
-       First call (or any call where num_streams differs from the previous one)
-       pays a full rebuild; subsequent calls with the same num_streams are
-       incremental. */
-    void run_graph_cudaflow_partition_update_incre_v2(size_t num_streams);
-
     // cur_parallelism is the parallelism limit for current iteration
     // max_parallelism is the maximum potential parallelism
     void run_graph_pasta_partition(size_t matrix_size, size_t cur_parallelism, size_t max_parallelism);  
@@ -322,17 +310,6 @@ class Graph {
 
     // helper: verify run_graph_cudaflow_partition_update_incre()
     bool verify_cudaflow_partition_update_incre(size_t num_streams);
-
-    // Verify run_graph_cudaflow_partition_update_incre_v2():
-    //   - Check incrementally-maintained _level_list matches a full rebuild.
-    //   - Check _streams partition is consistent (every node in exactly one stream;
-    //     each stream's list is sorted by level; stream membership matches
-    //     _level_stream_counts).
-    //   - Check the Taskflow's max parallelism (with current persistent stream
-    //     edges) does not exceed num_streams.
-    // Does NOT install or remove any Taskflow edges; expects the Taskflow to
-    // already be in the state v2 leaves it after a run.
-    bool verify_cudaflow_partition_update_incre_v2(size_t num_streams);
 
     // helper: verify Taskflow consistency with my graph object
     bool is_taskflow_topo_consistent();
@@ -400,30 +377,6 @@ class Graph {
     // incremental updaters to call from insert_edge/remove_edge
     void _incre_level_on_insert_edge(Node* u, Node* v);
     void _incre_level_on_remove_edge(Node* u, Node* v);
-
-    // Persistent stream partition for the *_v2 path. _streams[s] is the ordered
-    // list of nodes in stream s, sorted by ascending level.
-    std::vector<std::list<Node*>> _streams;
-
-    // num_streams used by the currently-installed _streams partition.
-    // 0 means "no v2 partition installed yet."
-    size_t _last_num_streams = 0;
-
-    // _level_stream_counts[L * _last_num_streams + s] = number of level-L nodes
-    // currently assigned to stream s. Used to pick the least-loaded stream.
-    std::vector<size_t> _level_stream_counts;
-
-    // v2 helpers — see pasta.cpp for full bodies and design notes.
-    size_t _pick_least_loaded_stream(int level) const;
-    void _place_node_in_stream(Node* n, int level);
-    void _remove_node_from_stream(Node* n);
-    void _rebuild_streams_full(size_t num_streams);
-    void _adjust_taskflow_edges_for_stream_change(
-      size_t s,
-      std::list<Node*>::iterator it,
-      int operation
-    );
-    void _resync_level_stream_counts();
 
     /*
       -------------------------------------------------
