@@ -100,6 +100,16 @@ class Node {
 
     bool _in_topo_nodes = false;  // true iff this node is linked into _topo_nodes
 
+    // Current outgoing and incoming stream-edge endpoints, if any.
+    // _current_stream_succ: the node this one currently points to via a stream
+    //                       edge in the Taskflow (nullptr if none).
+    // _current_stream_pred: the node currently pointing to this one via a stream
+    //                       edge in the Taskflow (nullptr if none).
+    // Each node has at most one of each (streams are linear chains).
+    // Maintained by run_graph_cudaflow_partition_update_incre and remove_node.
+    Node* _current_stream_succ = nullptr;
+    Node* _current_stream_pred = nullptr;
+
 };
 
 class Edge {
@@ -280,6 +290,8 @@ class Graph {
     void run_graph_cudaflow_partition_update(size_t num_streams); // num_streams = max_parallelism
     /* Now apply incremental update for level list */
     void run_graph_cudaflow_partition_update_incre(size_t num_streams); // num_streams = max_parallelism
+    /* Now apply incremental update for both level list and taskflow EXTRA dependencies */
+    void run_graph_cudaflow_partition_update_incre_v2(size_t num_streams); // num_streams = max_parallelism
 
     // cur_parallelism is the parallelism limit for current iteration
     // max_parallelism is the maximum potential parallelism
@@ -310,6 +322,16 @@ class Graph {
 
     // helper: verify run_graph_cudaflow_partition_update_incre()
     bool verify_cudaflow_partition_update_incre(size_t num_streams);
+
+    // Verify run_graph_cudaflow_partition_update_incre_v2():
+    //   - Check incrementally-maintained _level_list matches a full rebuild.
+    //   - Check _current_stream_succ / _current_stream_pred pointer consistency
+    //     (paired-up, no dangling, no aliasing).
+    //   - Check the Taskflow's max parallelism with persistent stream edges
+    //     does not exceed num_streams.
+    // Does NOT install or remove any Taskflow edges; expects the Taskflow to
+    // already be in the state v2 leaves it after a run.
+    bool verify_cudaflow_partition_update_incre_v2(size_t num_streams);
 
     // helper: verify Taskflow consistency with my graph object
     bool is_taskflow_topo_consistent();

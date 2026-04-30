@@ -179,10 +179,28 @@ Edge* Graph::insert_edge(Node* from, Node* to, RunMode mode) {
   edge_ptr->_satellite = --_edges.end();
 
   auto start_construct = std::chrono::steady_clock::now();
-  // if run taskflow with semaphore
+  /*
   if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
     // std::cerr << "taskflow insert: " << from->_name << " -> " << to->_name << "\n";
     from->_task.precede(to->_task);
+  }
+  */
+  if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
+    // If a v2 stream edge already covers this pair, don't add a duplicate.
+    // The stream edge is redundant with the new logical edge, so we logically
+    // "promote" the stream edge to the logical edge by clearing v2 bookkeeping.
+    bool skip_precede = false;
+    if(mode == RunMode::IncrementalPartition &&
+       from->_current_stream_succ == to)
+    {
+      skip_precede = true;
+      from->_current_stream_succ = nullptr;
+      to->_current_stream_pred = nullptr;
+    }
+
+    if(!skip_precede) {
+      from->_task.precede(to->_task);
+    }
   }
   auto end_construct = std::chrono::steady_clock::now();
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
@@ -223,6 +241,23 @@ void Graph::remove_node(Node* node, RunMode mode) {
   }
 
   auto start_construct = std::chrono::steady_clock::now();
+  // Clean up _current_stream_succ / _current_stream_pred bookkeeping.
+  // Each node has at most one outgoing and one incoming stream edge tracked,
+  // so this is O(1). _taskflow.erase below removes the actual Taskflow
+  // precede edges; we only need to clear the bookkeeping pointers on the
+  // neighbors so they don't dangle.
+  if(mode == RunMode::IncrementalPartition) {
+    if(node->_current_stream_pred != nullptr) {
+      // The predecessor's outgoing pointer was `node`. Clear it.
+      node->_current_stream_pred->_current_stream_succ = nullptr;
+      node->_current_stream_pred = nullptr;
+    }
+    if(node->_current_stream_succ != nullptr) {
+      // The successor's incoming pointer was `node`. Clear it.
+      node->_current_stream_succ->_current_stream_pred = nullptr;
+      node->_current_stream_succ = nullptr;
+    }
+  } 
   // Erase the task from the Taskflow under both Semaphore and IncrementalPartition modes.
   // Under IncrementalPartition the task was created by insert_node; leaving it in the
   // Taskflow would leak across iterations and keep growing the executor's work graph.
@@ -305,6 +340,15 @@ void Graph::remove_edge(Edge* edge, RunMode mode) {
   if(mode == RunMode::Semaphore || mode == RunMode::IncrementalPartition) {
     from->_task.remove_successors(to->_task);
     to->_task.remove_predecessors(from->_task);
+  }
+  // v2 bookkeeping: if a stream edge from→to existed, it was collaterally
+  // removed by remove_successors above. Clear the bookkeeping so the next
+  // Step 3 reconcile re-installs the stream edge if still desired.
+  if(mode == RunMode::IncrementalPartition) {
+    if(from->_current_stream_succ == to) {
+      from->_current_stream_succ = nullptr;
+      to->_current_stream_pred = nullptr;
+    }
   }
   auto end_construct = std::chrono::steady_clock::now();
   size_t taskflow_constucttime = std::chrono::duration_cast<std::chrono::microseconds>(end_construct-start_construct).count();
@@ -2941,6 +2985,266 @@ bool Graph::verify_cudaflow_partition_update_incre(size_t num_streams) {
   }
 
   return ok;
+}
+
+void Graph::run_graph_cudaflow_partition_update_incre_v2(size_t num_streams) { // num_streams = max_parallelism
+
+  /* Step 1: Level list — already maintained incrementally. No-op here. */
+  auto start_level_list = std::chrono::steady_clock::now();
+  auto end_level_list = std::chrono::steady_clock::now();
+  _cudaflow_incre_level_list_runtime +=
+    std::chrono::duration_cast<std::chrono::microseconds>(end_level_list - start_level_list).count();
+
+  /* Step 2: Rebuild stream assignment from scratch. */
+  auto start_assign = std::chrono::steady_clock::now();
+  _assign_nodes_to_streams(num_streams);
+  auto end_assign = std::chrono::steady_clock::now();
+  _cudaflow_assign_streams_runtime +=
+    std::chrono::duration_cast<std::chrono::microseconds>(end_assign - start_assign).count();
+
+  /* Step 3: Reconcile stream edges in the Taskflow.
+   *
+   *   For each node `from` in the new partition, compute its desired outgoing
+   *   stream-edge target `to` (or nullptr if `from` is the last node in its
+   *   stream, or if (from, to) would duplicate a logical edge).
+   *   Compare against `from->_current_stream_succ`:
+   *     - If they match: edge already installed, skip.
+   *     - If they differ: remove old edge (if any), add new edge (if any),
+   *       update both _current_stream_succ on `from` and _current_stream_pred
+   *       on the affected target nodes.
+   */
+  auto start_build = std::chrono::steady_clock::now();
+
+  for(size_t s = 0; s < _node_streams_scratch.size(); ++s) {
+    auto& stream = _node_streams_scratch[s];
+    for(size_t k = 0; k < stream.size(); ++k) {
+      Node* from = stream[k];
+      Node* desired = (k + 1 < stream.size()) ? stream[k + 1] : nullptr;
+
+      // Skip stream edges that would duplicate a logical edge.
+      if(desired && _has_original_edge(from, desired)) {
+        desired = nullptr;
+      }
+
+      Node* current = from->_current_stream_succ;
+
+      if(current == desired) {
+        continue;  // unchanged, no Taskflow mutation needed
+      }
+
+      // Remove old edge if any.
+      if(current != nullptr) {
+        from->_task.remove_successors(current->_task);
+        if(current->_current_stream_pred == from) {
+          current->_current_stream_pred = nullptr;
+        }
+      }
+
+      // Add new edge if any.
+      if(desired != nullptr) {
+        // If `desired` already had a different incoming stream edge, that
+        // other predecessor's outgoing edge will be reconciled when its own
+        // turn comes in this loop. We just overwrite the predecessor pointer
+        // here. (Old edge teardown happens via the other node's "remove old"
+        // step above, when this loop visits it.)
+        //
+        // However, if `desired->_current_stream_pred` is non-null and points
+        // to a node whose new desired_succ is NOT `desired`, the loop hasn't
+        // visited that other predecessor yet. We must NOT preemptively wipe
+        // its bookkeeping — its own iteration will handle it.
+        //
+        // The only thing we MUST do here is install the new edge and set the
+        // pointers consistently for the (from, desired) pair.
+
+        from->_task.precede(desired->_task);
+        desired->_current_stream_pred = from;
+      }
+
+      from->_current_stream_succ = desired;
+    }
+  }
+
+  auto end_build = std::chrono::steady_clock::now();
+  _cudaflow_taskflow_buildtime +=
+    std::chrono::duration_cast<std::chrono::microseconds>(end_build - start_build).count();
+
+  _critical_path_length_constrained += _get_critical_path_length_taskflow();
+
+  /* Step 4: Run Taskflow. Stream edges are already installed (and persist
+   *         across iterations except where the partition changed). */
+  auto start_run = std::chrono::steady_clock::now();
+  _executor.run(_taskflow).wait();
+  auto end_run = std::chrono::steady_clock::now();
+  _incre_runtime_with_cudaflow_partition +=
+    std::chrono::duration_cast<std::chrono::microseconds>(end_run - start_run).count();
+
+  /* Step 5: Removed. Stream edges persist; next iteration's Step 3 reconciles. */
+}
+
+bool Graph::verify_cudaflow_partition_update_incre_v2(size_t num_streams) {
+
+  /* ----- Diagnostics: basic state counts ----- */
+  size_t saved_total_levels = 0;
+  for(auto& b : _level_list) saved_total_levels += b.size();
+  std::cerr << "[verify-v2] _nodes.size()=" << _nodes.size()
+            << " _level_list total=" << saved_total_levels << "\n";
+
+  size_t task_count = 0;
+  _taskflow.for_each_task([&](tf::Task){ ++task_count; });
+  std::cerr << "[verify-v2] taskflow.num_tasks=" << task_count << "\n";
+
+  /* ===== Section A: verify _level_list matches full rebuild ===== */
+
+  std::unordered_map<Node*, int> saved_level;
+  saved_level.reserve(_nodes.size());
+  for(auto& node : _nodes) {
+    saved_level[&node] = node._level;
+  }
+  std::vector<std::list<Node*>> saved_level_list = _level_list;
+
+  _get_level_list_for_cudaflow();  // overwrites _level_list, _level, _level_it
+
+  bool ok = true;
+  const char* fail_reason = nullptr;
+
+  if(saved_level_list.size() != _level_list.size()) {
+    ok = false;
+    fail_reason = "level-list size mismatch";
+    std::cerr << "[verify-v2] saved_size=" << saved_level_list.size()
+              << " rebuilt_size=" << _level_list.size() << "\n";
+  }
+  else {
+    for(size_t k = 0; k < _level_list.size() && ok; ++k) {
+      if(saved_level_list[k].size() != _level_list[k].size()) {
+        ok = false;
+        fail_reason = "bucket-size mismatch";
+        std::cerr << "[verify-v2] level " << k
+                  << " saved_bucket_size=" << saved_level_list[k].size()
+                  << " rebuilt_bucket_size=" << _level_list[k].size() << "\n";
+        break;
+      }
+      for(Node* n : _level_list[k]) {
+        auto it = saved_level.find(n);
+        if(it == saved_level.end()) {
+          ok = false;
+          fail_reason = "node missing from saved_level map";
+          break;
+        }
+        if(it->second != static_cast<int>(k)) {
+          ok = false;
+          fail_reason = "node level mismatch";
+          std::cerr << "[verify-v2] node " << n->name()
+                    << " saved_level=" << it->second
+                    << " rebuilt_level=" << k << "\n";
+          break;
+        }
+      }
+    }
+  }
+
+  // Restore the snapshot so subsequent sections see the v2 state, not the rebuild.
+  _level_list = std::move(saved_level_list);
+  for(size_t k = 0; k < _level_list.size(); ++k) {
+    for(auto it = _level_list[k].begin(); it != _level_list[k].end(); ++it) {
+      (*it)->_level = static_cast<int>(k);
+      (*it)->_level_it = it;
+    }
+  }
+
+  if(!ok) {
+    std::cerr << "[verify-v2] FAILED Section A (level list): " << fail_reason << "\n";
+    return false;
+  }
+
+  /* ===== Section B: verify _current_stream_succ / _current_stream_pred consistency ===== */
+  //
+  // Invariants:
+  //   B1: If a->_current_stream_succ == b, then b->_current_stream_pred == a.
+  //   B2: If a->_current_stream_pred == b, then b->_current_stream_succ == a.
+  //   B3: At most one node points to a given target as its succ.
+  //       (Implied by B1 + symmetry; verified explicitly anyway.)
+  //   B4: All pointers point to nodes still in _nodes (no dangling).
+
+  // Build a set of valid Node* for fast membership.
+  std::unordered_set<Node*> valid_nodes;
+  valid_nodes.reserve(_nodes.size());
+  for(auto& n : _nodes) valid_nodes.insert(&n);
+
+  for(auto& n : _nodes) {
+    if(n._current_stream_succ != nullptr) {
+      if(valid_nodes.find(n._current_stream_succ) == valid_nodes.end()) {
+        std::cerr << "[verify-v2] FAILED Section B: node " << n.name()
+                  << " has dangling _current_stream_succ\n";
+        return false;
+      }
+      if(n._current_stream_succ->_current_stream_pred != &n) {
+        std::cerr << "[verify-v2] FAILED Section B: B1 violated — "
+                  << n.name() << "->succ = " << n._current_stream_succ->name()
+                  << " but " << n._current_stream_succ->name() << "->pred = "
+                  << (n._current_stream_succ->_current_stream_pred
+                        ? n._current_stream_succ->_current_stream_pred->name() : "null")
+                  << "\n";
+        return false;
+      }
+    }
+    if(n._current_stream_pred != nullptr) {
+      if(valid_nodes.find(n._current_stream_pred) == valid_nodes.end()) {
+        std::cerr << "[verify-v2] FAILED Section B: node " << n.name()
+                  << " has dangling _current_stream_pred\n";
+        return false;
+      }
+      if(n._current_stream_pred->_current_stream_succ != &n) {
+        std::cerr << "[verify-v2] FAILED Section B: B2 violated — "
+                  << n.name() << "->pred = " << n._current_stream_pred->name()
+                  << " but " << n._current_stream_pred->name() << "->succ = "
+                  << (n._current_stream_pred->_current_stream_succ
+                        ? n._current_stream_pred->_current_stream_succ->name() : "null")
+                  << "\n";
+        return false;
+      }
+    }
+  }
+
+  /* ===== Section C: verify Taskflow is acyclic and respects parallelism ===== */
+  /*
+   * v2 leaves the Taskflow in its post-run state with persistent stream edges.
+   * Verify it as-is, without installing or removing any edges.
+   */
+  try {
+    auto levels = _get_taskflow_level_list();
+
+    size_t max_parallelism = 0;
+    size_t max_level_idx = 0;
+    for(size_t li = 0; li < levels.size(); ++li) {
+      if(levels[li].size() > max_parallelism) {
+        max_parallelism = levels[li].size();
+        max_level_idx = li;
+      }
+    }
+
+    if(max_parallelism > num_streams) {
+      std::cerr << "[verify-v2] FAILED Section C: max_parallelism="
+                << max_parallelism << " at level " << max_level_idx
+                << " exceeds num_streams=" << num_streams << "\n";
+      std::cerr << "[verify-v2] nodes at that level:";
+      for(Node* n : levels[max_level_idx]) {
+        std::cerr << " " << n->name();
+      }
+      std::cerr << "\n";
+      return false;
+    }
+  }
+  catch(const std::exception& ex) {
+    std::cerr << "[verify-v2] FAILED Section C: parallelism check threw: "
+              << ex.what() << "\n";
+    return false;
+  }
+  catch(...) {
+    std::cerr << "[verify-v2] FAILED Section C: parallelism check threw unknown\n";
+    return false;
+  }
+
+  return true;
 }
 
 } // end of namespace pasta
