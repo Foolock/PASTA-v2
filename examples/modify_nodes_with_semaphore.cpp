@@ -88,8 +88,8 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
-  std::cout << "taskflow buildtime (semaphore): " << graph.get_semaphore_taskflow_buildtime() << " us\n";
-  std::cout << "taskflow runtime (semaphore): " << graph.get_semaphore_taskflow_runtime() << " us\n";
+  std::cout << "taskflow buildtime (semaphore): " << graph.get_semaphore_taskflow_buildtime() / 1000.0 << " ms\n";
+  std::cout << "taskflow runtime (semaphore): " << graph.get_semaphore_taskflow_runtime() / 1000.0 << " ms\n";
 
   return 0;
 }

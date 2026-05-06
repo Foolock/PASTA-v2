@@ -13,12 +13,13 @@ set(PASTA_EXAMPLES
   modify_edges_with_cudaflow 
   modify_edges_with_cudaflow_update 
   modify_edges_with_cudaflow_update_incre 
-  modify_nodes_with_cudaflow_update_incre
   # modify_nodes_with_cudaflow_update_incre_stable
-  modify_nodes_with_cudaflow_update_incre_stable_v1
-  modify_nodes_with_cudaflow_update_incre_stable_v2
   modify_nodes_with_semaphore
   modify_nodes_with_semaphore_stable
+  modify_nodes_with_partition_v1_stable # cudaflow partition
+  modify_nodes_with_partition_v1 # cudaflow partition
+  modify_nodes_with_partition_v2_stable
+  modify_nodes_with_partition_v2
   mis
   cudaflow_partition
 )

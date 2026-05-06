@@ -10,6 +10,12 @@
 *.temp
 *.un~
 
+tv80_1.txt
+tv80_10.txt
+tv80_50.txt
+tv80_100.txt
+tv80_200.txt
+
 # Build directories
 build/
 

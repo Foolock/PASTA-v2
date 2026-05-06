@@ -24,24 +24,32 @@ std::vector<int> generate_random_nums(
 
 int main(int argc, char* argv[]) {
 
-  if(argc != 4) {
-    std::cerr << "usage: ./example/modify_nodes_with_cudaflow_update_incre matrix_size num_incre_ops circuit_file\n";
+  if(argc != 4 && argc != 5) {
+    std::cerr << "usage: ./example/modify_nodes_with_cudaflow_update_incre_stable_v2 "
+                 "matrix_size num_incre_ops circuit_file [num_streams]\n";
+    std::cerr << "  num_streams: parallelism limit held constant across iterations "
+                 "(default 8)\n";
     std::exit(EXIT_FAILURE);
   }
 
   int matrix_size = std::atoi(argv[1]);
   int num_incre_ops = std::atoi(argv[2]);
   std::string circuit_file = argv[3];
+  int num_streams = (argc == 5) ? std::atoi(argv[4]) : 8;
+
+  if(num_streams < 1) {
+    std::cerr << "num_streams must be >= 1\n";
+    std::exit(EXIT_FAILURE);
+  }
 
   pasta::RunMode mode = pasta::RunMode::IncrementalPartition;
 
   pasta::Graph graph(circuit_file, mode, matrix_size);
 
-  int max_parallelism = 8;
-
   std::cout << "benchmark: " << circuit_file << "\n";
   std::cout << "num_nodes: " << graph.num_nodes() << "\n";
   std::cout << "num_edges: " << graph.num_edges() << "\n";
+  // std::cout << "num_streams (stable, v2): " << num_streams << "\n";
 
   size_t N = num_incre_ops;
   size_t num_incre_itr = 1000;
@@ -50,24 +58,17 @@ int main(int argc, char* argv[]) {
 
   std::mt19937 gen(42);
 
-  int num_streams = max_parallelism;  // start at 8
+  int max_parallelism = 8;
   int dir = -1;                       // going down first: 8->7->...->1
 
   while (count < num_incre_itr) {
 
-    // run with current setting
-    graph.run_graph_cudaflow_partition_update_incre(num_streams);
+    // v2: persistent stream edges across iterations, reconciled via diff in Step 3.
+    graph.run_graph_cudaflow_partition_update_incre_v2(num_streams);
 
-    // remove N edges randomly
     graph.remove_random_edges(N, gen, mode);
-
-    // add N edges randomly
     graph.add_random_edges(N, gen, 20, mode);
-
-    // remove N nodes randomly
     graph.remove_random_nodes(N, gen, mode);
-
-    // add N nodes randomly, each connected to one random existing node
     graph.add_random_nodes(N, gen, "new", mode, matrix_size);
 
     if(graph.has_cycle_before_partition() == true) {
@@ -88,12 +89,12 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
-  std::cout << "avg critical path length (cudaflow): "
+  std::cout << "avg critical path length (partition v2): "
             << static_cast<double>(graph.get_critical_path_length_constrained()) / num_incre_itr << "\n";
-  std::cout << "incremental level list runtime (cudaflow): " << graph.get_cudaflow_incre_level_list_runtime() << " us\n";
-  std::cout << "assign streams runtime (cudaflow): " << graph.get_cudaflow_assign_streams_runtime() << " us\n";
-  std::cout << "taskflow buildtime (cudaflow): " << graph.get_cudaflow_taskflow_buildtime() << " us\n";
-  std::cout << "taskflow runtime (cudaflow): " << graph.get_incre_runtime_with_cudaflow_partition() << " us\n";
+  std::cout << "incremental level list runtime (partition v2): " << graph.get_cudaflow_incre_level_list_runtime() / 1000.0 << " ms\n";
+  std::cout << "assign streams runtime (partition v2): " << graph.get_cudaflow_assign_streams_runtime() / 1000.0 << " ms\n";
+  std::cout << "taskflow buildtime (partition v2): " << graph.get_cudaflow_taskflow_buildtime() / 1000.0 << " ms\n";
+  std::cout << "taskflow runtime (partition v2): " << graph.get_incre_runtime_with_cudaflow_partition() / 1000.0 << " ms\n";
 
   return 0;
 }

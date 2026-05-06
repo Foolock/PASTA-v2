@@ -49,7 +49,7 @@ int main(int argc, char* argv[]) {
   std::cout << "benchmark: " << circuit_file << "\n";
   std::cout << "num_nodes: " << graph.num_nodes() << "\n";
   std::cout << "num_edges: " << graph.num_edges() << "\n";
-  std::cout << "num_streams (stable, v2): " << num_streams << "\n";
+  // std::cout << "num_streams (stable, v2): " << num_streams << "\n";
 
   size_t N = num_incre_ops;
   size_t num_incre_itr = 1000;
@@ -76,12 +76,12 @@ int main(int argc, char* argv[]) {
     ++count;
   }
 
-  std::cout << "avg critical path length (cudaflow v2): "
+  std::cout << "avg critical path length (partition v2): "
             << static_cast<double>(graph.get_critical_path_length_constrained()) / num_incre_itr << "\n";
-  std::cout << "incremental level list runtime (cudaflow v2): " << graph.get_cudaflow_incre_level_list_runtime() << " us\n";
-  std::cout << "assign streams runtime (cudaflow v2): " << graph.get_cudaflow_assign_streams_runtime() << " us\n";
-  std::cout << "taskflow buildtime (cudaflow v2): " << graph.get_cudaflow_taskflow_buildtime() << " us\n";
-  std::cout << "taskflow runtime (cudaflow v2): " << graph.get_incre_runtime_with_cudaflow_partition() << " us\n";
+  std::cout << "incremental level list runtime (partition v2): " << graph.get_cudaflow_incre_level_list_runtime() / 1000.0 << " ms\n";
+  std::cout << "assign streams runtime (partition v2): " << graph.get_cudaflow_assign_streams_runtime() / 1000.0 << " ms\n";
+  std::cout << "taskflow buildtime (partition v2): " << graph.get_cudaflow_taskflow_buildtime() / 1000.0 << " ms\n";
+  std::cout << "taskflow runtime (partition v2): " << graph.get_incre_runtime_with_cudaflow_partition() / 1000.0 << " ms\n";
 
   return 0;
 }
